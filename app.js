@@ -154,7 +154,7 @@ app.message(async ({ message, say }) => {
 });
 
 // Handle /draft slash command - Make it interactive to ask about draft type and purpose
-app.command('/draft', async ({ command, ack, respond }) => {
+app.command('/draft', async ({ command, ack, say, client }) => {
   // Acknowledge command request right away
   await ack();
 
@@ -163,7 +163,7 @@ app.command('/draft', async ({ command, ack, respond }) => {
     const draftRequest = command.text;
     
     if (!draftRequest) {
-      await respond('What would you like me to help you draft? (e.g., an email, meeting notes, project proposal)');
+      await say(`<@${command.user_id}> What would you like me to help you draft? (e.g., an email, meeting notes, project proposal)`);
       return;
     }
 
@@ -171,7 +171,7 @@ app.command('/draft', async ({ command, ack, respond }) => {
     const draftType = await getAIResponse(`Analyze this draft request: "${draftRequest}" and determine what type of content it is (email, note, proposal, etc.). Just return the content type in 1-3 words.`);
     
     // Let the user know we're working on it
-    await respond(`I'll help you draft a ${draftType.toLowerCase()} based on your request. Creating this now...`);
+    await say(`<@${command.user_id}> I'll help you draft a ${draftType.toLowerCase()} based on your request: "${draftRequest}". Creating this now...`);
     
     // Use AI to generate the tailored draft
     const prompt = `Create a professional ${draftType.toLowerCase()} for: ${draftRequest}. Make it well-structured and appropriate for business communication. Include all necessary components for this type of document.`;
@@ -180,26 +180,26 @@ app.command('/draft', async ({ command, ack, respond }) => {
     // Send the draft back with recommendations
     const recommendations = await getAIResponse(`Provide 2-3 quick tips for improving this ${draftType.toLowerCase()}: "${draftRequest}". Keep it very brief.`);
     
-    await respond(`*Here's your ${draftType.toLowerCase()} draft:*\n\n${draftContent}\n\n*Recommendations to make this ${draftType.toLowerCase()} more effective:*\n${recommendations}`);
+    await say(`*Here's a ${draftType.toLowerCase()} draft for <@${command.user_id}>:*\n\n${draftContent}\n\n*Recommendations to make this ${draftType.toLowerCase()} more effective:*\n${recommendations}`);
   } catch (error) {
     console.error('Error handling /draft command:', error);
-    await respond('Sorry, I encountered an error creating your draft. Please try again later.');
+    await say(`<@${command.user_id}> Sorry, I encountered an error creating your draft. Please try again later.`);
   }
 });
 
 // Handle /audit slash command - Make it interactive to ask for details
-app.command('/audit', async ({ command, ack, respond }) => {
+app.command('/audit', async ({ command, ack, say }) => {
   await ack();
   try {
     const auditRequest = command.text;
     
     if (!auditRequest) {
-      await respond('I can help audit various aspects of your work. What would you like me to audit? (e.g., project timeline, team productivity, budget allocation)');
+      await say(`<@${command.user_id}> I can help audit various aspects of your work. What would you like me to audit? (e.g., project timeline, team productivity, budget allocation)`);
       return;
     }
 
     // Ask for more specific details
-    await respond(`I'll be auditing: *${auditRequest}*\n\nTo provide a thorough audit, I need some more details. What specific aspects of "${auditRequest}" should I focus on? What are your main concerns or goals?`);
+    await say(`<@${command.user_id}> requested an audit for: *${auditRequest}*\n\nAnalyzing this request and preparing an audit...`);
     
     // Note: In a real implementation, we would need to capture the user's follow-up response
     // Since we can't do that in this simple slash command without additional infrastructure,
@@ -216,26 +216,26 @@ app.command('/audit', async ({ command, ack, respond }) => {
     
     // Add a short delay to simulate thinking/analysis time
     setTimeout(async () => {
-      await respond(`*Audit Results for "${auditRequest}":*\n\n${auditResponse}`);
+      await say(`*Audit Results for "${auditRequest}" (requested by <@${command.user_id}>):*\n\n${auditResponse}`);
     }, 3000);
   } catch (error) {
     console.error('Error handling /audit command:', error);
-    await respond('Sorry, I encountered an error processing your audit request. Please try again later.');
+    await say(`<@${command.user_id}> Sorry, I encountered an error processing your audit request. Please try again later.`);
   }
 });
 
 // Handle /reminder slash command - Ask for details and make time recommendations
-app.command('/reminder', async ({ command, ack, respond }) => {
+app.command('/reminder', async ({ command, ack, say }) => {
   await ack();
   try {
     const reminderRequest = command.text;
     
     if (!reminderRequest) {
-      await respond('What would you like me to remind you about? I can help set reminders and suggest optimal timeframes for tasks.');
+      await say(`<@${command.user_id}> What would you like me to remind you about? I can help set reminders and suggest optimal timeframes for tasks.`);
       return;
     }
 
-    await respond(`Setting up a reminder for: *${reminderRequest}*\n\nAnalyzing the best approach and timeframe...`);
+    await say(`Setting up a reminder for <@${command.user_id}>: *${reminderRequest}*\n\nAnalyzing the best approach and timeframe...`);
     
     // Analyze the task complexity and recommend timeframes
     const timeAnalysis = await getAIResponse(`Analyze this task: "${reminderRequest}". \n` +
@@ -252,19 +252,19 @@ app.command('/reminder', async ({ command, ack, respond }) => {
     
     // Add a short delay to simulate processing time
     setTimeout(async () => {
-      await respond(`*Reminder set: ${reminderRequest}*\n\n*Time Recommendations:*\n${timeAnalysis}\n\n*Suggested Task Breakdown:*\n${taskBreakdown}`);
+      await say(`*Reminder set for <@${command.user_id}>: ${reminderRequest}*\n\n*Time Recommendations:*\n${timeAnalysis}\n\n*Suggested Task Breakdown:*\n${taskBreakdown}`);
     }, 2000);
   } catch (error) {
     console.error('Error handling /reminder command:', error);
-    await respond('Sorry, I encountered an error setting your reminder. Please try again later.');
+    await say(`<@${command.user_id}> Sorry, I encountered an error setting your reminder. Please try again later.`);
   }
 });
 
 // Handle /describe slash command - Describe what the app is
-app.command('/describe', async ({ command, ack, respond }) => {
+app.command('/describe', async ({ command, ack, say }) => {
   await ack();
   try {
-    await respond({
+    await say({
       text: "🚀 *Milestone Madness - Your AI-Powered Project Assistant* 🚀\n\n" +
             "I'm an intelligent Slack bot designed to help you track business milestones, audit data, create professional drafts, and manage your projects effectively.\n\n" +
             "*Key Capabilities:*\n" +
@@ -278,7 +278,7 @@ app.command('/describe', async ({ command, ack, respond }) => {
     });
   } catch (error) {
     console.error('Error handling /describe command:', error);
-    await respond('Sorry, I encountered an error displaying my capabilities. Please try again later.');
+    await say(`<@${command.user_id}> Sorry, I encountered an error displaying my capabilities. Please try again later.`);
   }
 });
 
