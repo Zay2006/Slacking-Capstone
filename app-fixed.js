@@ -25,7 +25,7 @@ console.log(`App Token (first chars): ${appToken.substring(0, 10)}...`);
 async function getAIResponse(prompt) {
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-mini",
+      model: "gpt-4-turbo-preview",
       messages: [
         { 
           role: "system", 
