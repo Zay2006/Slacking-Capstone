@@ -1,0 +1,16 @@
+{
+    "name": "milestone-madness",
+    "version": "1.0.0",
+    "description": "AI-Powered Slack Bot for tracking business milestones",
+    "main": "app.js",
+    "scripts": {
+      "start": "node app.js"
+    },
+    "dependencies": {
+      "@slack/bolt": "^4.4.0",
+      "@slack/socket-mode": "^2.0.4",
+      "dotenv": "^16.5.0",
+      "localtunnel": "^2.0.2",
+      "openai": "^4.28.0"
+    }
+  }
