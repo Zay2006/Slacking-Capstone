@@ -220,12 +220,20 @@ app.command('/describe', async ({ ack, respond }) => {
   }
 });
 
-// Set the port for the app to listen on
+// port is set to 3000 unless specified otherwise in environment variables
 const port = process.env.PORT || 3000;
+
+// Import database connection testing
+const { testConnection } = require('./utils/database');
 
 // Start the app
 (async () => {
   try {
+    // Test database connection
+    console.log('Testing database connection...');
+    await testConnection();
+
+    // Start the Slack app
     await app.start(port);
     console.log('⚡️ Milestone Madness bot is running in Socket Mode!');
     console.log('📡 No need for tunnels or public URLs with Socket Mode');
@@ -235,6 +243,7 @@ const port = process.env.PORT || 3000;
     console.log('1. Check your .env file has the correct tokens');
     console.log('2. Verify your app has the required scopes');
     console.log('3. Ensure Socket Mode is enabled in your Slack app settings');
-    console.log('4. Try reinstalling your app to the workspace');
+    console.log('4. Check your database connection settings');
+    console.log('5. Try reinstalling your app to the workspace');
   }
 })();
