@@ -52,12 +52,32 @@ Milestone Madness is an intelligent Slack bot that combines structured commands 
    - The tunnel URL will be displayed in the console.
    - Use this URL in your Slack app configuration under Request URLs.
 
+## Project Structure
+
+The codebase is organized with a modular architecture for better maintainability:
+
+```
+├── app.js             # Main application entry point
+├── commands/          # Slash command handlers
+│   ├── audit.js       # /audit command handler
+│   ├── describe.js    # /describe command handler
+│   ├── draft.js       # /draft command handler
+│   ├── index.js       # Command exports
+│   ├── messages.js    # Message handlers (mentions/DMs)
+│   └── reminder.js    # /reminder command handler
+├── utils/             # Utility functions
+│   └── ai.js          # AI functionality (OpenAI integration)
+├── package.json       # Project dependencies
+└── .env               # Environment variables
+```
+
 ## How It Works
 
 - The application starts a local server on the specified port.
-- Localtunnel creates a secure tunnel to your local server, generating a public URL.
-- The Slack bot uses this public URL to receive events from Slack.
-- When someone mentions your bot in Slack, it will respond with a greeting.
+- The bot runs in Socket Mode, which connects directly to Slack's WebSocket API.
+- When someone mentions the bot or uses a slash command, the appropriate handler is invoked.
+- The handler uses the AI utilities to generate a response via OpenAI.
+- All command logic is modularized for easier maintenance and extensions.
 
 ## Using localtunnel Directly
 
