@@ -4,20 +4,81 @@
  * Handle the /describe slash command
  * Provides information about what the Milestone Madness bot can do
  */
-async function handleDescribeCommand({ command, ack, say }) {
+async function handleDescribeCommand({ command, ack, respond }) {
   await ack();
   try {
-    await say({
-      text: "🚀 *Milestone Madness - Your AI-Powered Project Assistant* 🚀\n\n" +
-            "I'm an intelligent Slack bot designed to help you track business milestones, audit data, create professional drafts, and manage your projects effectively.\n\n" +
-            "*Key Capabilities:*\n" +
-            "• *AI-Powered Conversations:* Ask me questions directly in channels or DMs\n" +
-            "• */audit:* Get detailed analysis of your data, processes, or metrics\n" +
-            "• */draft:* Generate tailored professional content with recommendations\n" +
-            "• */reminder:* Set reminders with smart time recommendations and task breakdowns\n\n" +
-            "Built with Bolt.js and integrated with OpenAI's powerful language model to provide you with intelligent, context-aware assistance.\n\n" +
-            "Need help? Just mention me in a channel or send me a direct message!\n" +
-            "Try asking 'Is there anything you can't do?' for a fun response! 😉"
+    // For slash commands, we need to use respond instead of say with response_type: 'in_channel'
+    // to make the message visible to everyone
+    await respond({
+      response_type: 'in_channel',
+      blocks: [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "🚀 Milestone Madness Bot",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Your AI Project Assistant*\nBuilt with OpenAI & Slack API"
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Status:* 🟢 Ready to assist\n*Mood:* Slightly snarky"
+            }
+          ]
+        },
+        {
+          "type": "image",
+          "image_url": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=2070&auto=format&fit=crop",
+          "alt_text": "Project management visuals"
+        },
+        {
+          "type": "divider"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*🔥 SUPERCHARGED COMMANDS:*"
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*💬 Chat*\nTag me with <@Milestone Madness>\n_Ask anything, get smart answers_"
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*🔍 /audit*\nAnalyze project data\n_Get actionable insights_"
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Pro tip:* Try asking me '_Is there anything you can't do?_' for a surprise! 😏"
+          },
+          "accessory": {
+            "type": "button",
+            "text": {
+              "type": "plain_text",
+              "text": "Try Me",
+              "emoji": true
+            },
+            "value": "try_me",
+            "action_id": "try_bot"
+          }
+        }
+      ]
     });
   } catch (error) {
     console.error('Error handling /describe command:', error);

@@ -28,23 +28,140 @@ if (!DATABASE_URL) {
   console.error('⚠️ DATABASE_URL not found in environment variables or .env file');
 }
 
-// Create a connection pool
-const pool = DATABASE_URL ? new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // Required for Supabase connections
-}) : null;
+// Set up pooling configuration
+let poolConfig = null;
+if (DATABASE_URL) {
+  poolConfig = {
+    connectionString: DATABASE_URL,
+    ssl: { rejectUnauthorized: false }, // Required for Supabase connections
+    // Add connection pool settings for better stability
+    max: 10, // Reduced max clients - Supabase might have connection limits
+    idleTimeoutMillis: 10000, // Close idle clients after 10 seconds
+    connectionTimeoutMillis: 5000 // Return an error after 5 seconds if connection could not be established
+  };
+}
+
+// Implement a connection management class for improved stability
+class DatabaseManager {
+  constructor(config) {
+    this.config = config;
+    this.pool = config ? new Pool(config) : null;
+    this.setupPool();
+    this.lastPingTime = Date.now();
+    this.connectionStatus = 'initializing';
+    
+    // Set up a ping interval to prevent idle disconnections
+    if (this.pool) {
+      this.pingInterval = setInterval(() => this.pingDatabase(), 30000); // 30 seconds
+    }
+  }
+  
+  setupPool() {
+    if (!this.pool) return;
+    
+    this.pool.on('error', (err, client) => {
+      console.log(`Database pool error detected: ${err.message}`);
+      this.connectionStatus = 'error';
+      
+      // Don't crash the application, just log the error
+      // The connection will be re-established on next query
+    });
+    
+    this.pool.on('connect', (client) => {
+      console.log('New database connection established');
+      this.connectionStatus = 'connected';
+    });
+    
+    this.pool.on('remove', (client) => {
+      // A client has been removed from the pool
+    });
+  }
+  
+  async pingDatabase() {
+    try {
+      // Only ping if we're not in an error state
+      if (this.connectionStatus !== 'error') {
+        // Use a simple query to keep the connection alive
+        await this.query('SELECT NOW()');
+        this.lastPingTime = Date.now();
+        // No need to log every ping - it would flood the logs
+      }
+    } catch (err) {
+      console.log('Ping failed, connection may be down:', err.message);
+      this.connectionStatus = 'error';
+      // The next actual query will trigger a reconnect attempt
+    }
+  }
+  
+  async query(text, params) {
+    if (!this.pool) {
+      console.error('Database pool not available');
+      return null;
+    }
+    
+    try {
+      const result = await this.pool.query(text, params);
+      this.connectionStatus = 'connected'; // Query succeeded, connection is good
+      return result;
+    } catch (err) {
+      console.error('Database query error:', err.message);
+      
+      // Check if this is a connection error
+      if (err.code === 'ECONNREFUSED' || 
+          err.code === 'ETIMEDOUT' || 
+          err.code === 'PROTOCOL_CONNECTION_LOST' ||
+          err.message.includes('termination')) {
+        
+        console.log('Connection error detected, will attempt reconnect on next query');
+        this.connectionStatus = 'error';
+        
+        // Let the error bubble up so the caller can handle it
+      }
+      
+      throw err;
+    }
+  }
+  
+  async getClient() {
+    if (!this.pool) return null;
+    
+    const client = await this.pool.connect();
+    const release = client.release;
+    
+    // Override the release method to keep track of the client
+    client.release = () => {
+      release.call(client);
+    };
+    
+    return client;
+  }
+  
+  async end() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+    }
+    
+    if (this.pool) {
+      await this.pool.end();
+      console.log('Database pool has ended');
+    }
+  }
+}
+
+// Create a single instance of the database manager
+const dbManager = poolConfig ? new DatabaseManager(poolConfig) : null;
 
 // Test the database connection
 async function testConnection() {
-  if (!pool) {
+  if (!dbManager || !dbManager.pool) {
     console.error('❌ No database connection pool available - DATABASE_URL not found or invalid');
     return false;
   }
   
   try {
-    const client = await pool.connect();
+    // Use the query method of our DatabaseManager to test the connection
+    const result = await dbManager.query('SELECT NOW() as time');
     console.log('✅ Database connection successful!', new Date().toISOString());
-    client.release();
     return true;
   } catch (err) {
     console.error('❌ Database connection failed:', err.message);
@@ -54,7 +171,7 @@ async function testConnection() {
 
 // Check if database is available
 function checkDbAvailable() {
-  if (!pool) {
+  if (!dbManager || !dbManager.pool) {
     console.error('❌ Database not available - DATABASE_URL not found or invalid');
     return false;
   }
@@ -66,7 +183,7 @@ async function getRoadmapData(projectId) {
   if (!checkDbAvailable()) return null;
   
   try {
-    const result = await pool.query(
+    const result = await dbManager.query(
       'SELECT * FROM roadmaps WHERE project_id = $1',
       [projectId]
     );
@@ -82,8 +199,8 @@ async function listRoadmapProjects() {
   if (!checkDbAvailable()) return [];
   
   try {
-    const result = await pool.query(
-      'SELECT project_id, data->\'name\' as name FROM roadmaps ORDER BY data->\'name\''
+    const result = await dbManager.query(
+      'SELECT project_id, data->"name" as name FROM roadmaps ORDER BY data->"name"'
     );
     return result.rows;
   } catch (err) {
@@ -98,21 +215,21 @@ async function updateRoadmapData(projectId, data) {
   
   try {
     // Check if record exists
-    const existingRecord = await pool.query(
+    const existingRecord = await dbManager.query(
       'SELECT * FROM roadmaps WHERE project_id = $1',
       [projectId]
     );
     
     if (existingRecord.rowCount > 0) {
       // Update existing record
-      const result = await pool.query(
+      const result = await dbManager.query(
         'UPDATE roadmaps SET data = $1, updated_at = NOW() WHERE project_id = $2 RETURNING *',
         [data, projectId]
       );
       return result.rows.length > 0 ? result.rows[0] : null;
     } else {
       // Insert new record
-      const result = await pool.query(
+      const result = await dbManager.query(
         'INSERT INTO roadmaps (project_id, data, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) RETURNING *',
         [projectId, data]
       );

@@ -83,37 +83,69 @@ async function generateAIResponse(prompt) {
 }
 
 // Handle direct messages to the bot
-app.message(async ({ message, say }) => {
+app.message(async ({ message, client, say }) => {
   // Skip messages from the bot itself
   if (message.subtype === 'bot_message') return;
   
-  // Only respond to direct messages or when mentioned
+  // Safely check if the bot is mentioned and message has text
   const isBotMentioned = message.text && message.text.includes(`<@${app.botId}>`);
   const isDirectMessage = message.channel_type === 'im';
   
   if (isDirectMessage || isBotMentioned) {
     try {
-      // Show typing indicator
-      await app.client.chat.postMessage({
+      // Process the user's message - ensuring message.text exists before operating on it
+      const userMessage = message.text ? message.text.replace(/<@[A-Z0-9]+>/g, '').trim().toLowerCase() : '';
+      
+      // Handle snarky responses for "what can't you do" questions
+      if (/what.*can't.*do|what.*cant.*do|what.*not.*able.*do|what.*limitations|is.*anything.*can't.*do/.test(userMessage)) {
+        // List of snarky responses
+        const snarkyResponses = [
+          "I can't tolerate missed deadlines... *glares in project manager*",
+          "I can't convince your team that 'we'll figure it out as we go' is a solid project strategy.",
+          "I can't make your unrealistic timeline realistic. Even my AI powers have limits.",
+          "I can't magically turn your last-minute changes into 'part of the original plan.'",
+          "I can't read minds... yet. Still waiting for that firmware update.",
+          "I can't join you for happy hour, which is truly my greatest limitation.",
+          "I can't explain to executives why good software takes time to build.",
+          "I can't make your stakeholders understand what 'agile' actually means.",
+          "I can't turn your one-page spec into a fully working enterprise system by Friday."
+        ];
+        
+        // Pick a random response
+        const randomResponse = snarkyResponses[Math.floor(Math.random() * snarkyResponses.length)];
+        
+        // Send the snarky response to the entire channel (not just as a thread)
+        await client.chat.postMessage({
+          channel: message.channel,
+          text: `<@${message.user}> asked what I can't do... ${randomResponse}`
+        });
+        return;
+      }
+      
+      // Show typing indicator (visible only to the user who triggered the message)
+      await client.chat.postEphemeral({
         channel: message.channel,
-        text: "Thinking...",
-        thread_ts: message.thread_ts || message.ts
+        user: message.user,
+        text: "Thinking..."
       });
       
       // Generate response using OpenAI
-      const userPrompt = message.text.replace(/<@[A-Z0-9]+>/g, '').trim();
-      const response = await generateAIResponse(userPrompt);
+      const response = await generateAIResponse(userMessage);
       
-      // Send the response
-      await say({
-        text: response,
-        thread_ts: message.thread_ts || message.ts
+      // For chat messages, a slight delay helps ensure proper message ordering
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Send the response to the entire channel (visible to everyone)
+      // Using client.chat.postMessage without thread_ts ensures visibility to all
+      await client.chat.postMessage({
+        channel: message.channel,
+        text: response
       });
     } catch (error) {
       console.error("Error handling message:", error);
-      await say({
-        text: "Sorry, I encountered an error processing your request.",
-        thread_ts: message.thread_ts || message.ts
+      await client.chat.postMessage({
+        channel: message.channel,
+        text: "Sorry, I encountered an error processing your request."
       });
     }
   }
@@ -173,6 +205,105 @@ app.command('/draft', async ({ command, ack, respond }) => {
       text: "Sorry, I encountered an error creating the draft."
     });
   }
+});
+
+// Handle interaction with the Try Me button on the describe command
+app.action('try_bot', async ({ ack, body, client }) => {
+  await ack();
+  
+  try {
+    // List of snarky responses (same as in message handler)
+    const snarkyResponses = [
+      "I can't tolerate missed deadlines... *glares in project manager*",
+      "I can't convince your team that 'we'll figure it out as we go' is a solid project strategy.",
+      "I can't make your unrealistic timeline realistic. Even my AI powers have limits.",
+      "I can't magically turn your last-minute changes into 'part of the original plan.'",
+      "I can't read minds... yet. Still waiting for that firmware update.",
+      "I can't join you for happy hour, which is truly my greatest limitation.",
+      "I can't explain to executives why good software takes time to build.",
+      "I can't make your stakeholders understand what 'agile' actually means.",
+      "I can't turn your one-page spec into a fully working enterprise system by Friday."
+    ];
+    
+    // Pick a random response
+    const randomResponse = snarkyResponses[Math.floor(Math.random() * snarkyResponses.length)];
+    
+    // Post a message visible to everyone in the channel using Web API
+    await client.chat.postMessage({
+      channel: body.channel.id,
+      text: `<@${body.user.id}> asked what I can't do... ${randomResponse}`,
+      // No thread_ts parameter - this ensures it's posted to the channel, not in a thread
+    });
+  } catch (error) {
+    console.error("Error handling try_bot action:", error);
+    // Send an error message to the channel
+    await client.chat.postMessage({
+      channel: body.channel.id,
+      text: "Sorry, I encountered an error while being snarky."
+    });
+  }
+});
+
+// Handle Help button from describe command
+app.action('help_button', async ({ ack, body, client }) => {
+  await ack();
+  
+  // Show a more detailed help message that's visible to everyone
+  await client.chat.postMessage({
+    channel: body.channel.id,
+    blocks: [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "🛟 Milestone Madness Help",
+          "emoji": true
+        }
+      },
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "*Here's how to get the most out of me:*"
+        }
+      },
+      {
+        "type": "section",
+        "fields": [
+          {
+            "type": "mrkdwn",
+            "text": "*🔍 Project Audit*\n`/audit [project-id]`\nProvides detailed analysis of project data with insights on progress, risks, and timelines."
+          },
+          {
+            "type": "mrkdwn",
+            "text": "*📝 Content Creation*\n`/draft [request]`\nGenerates professional drafts for project docs, announcements, or reports."
+          }
+        ]
+      },
+      {
+        "type": "section",
+        "fields": [
+          {
+            "type": "mrkdwn",
+            "text": "*⏰ Smart Reminders*\n`/reminder [task] [date]`\nSets intelligent reminders with task breakdowns and timing suggestions."
+          },
+          {
+            "type": "mrkdwn",
+            "text": "*💬 Direct Chat*\n`@Milestone Madness [question]`\nAsk me anything about your projects, roadmaps, or for recommendations."
+          }
+        ]
+      },
+      {
+        "type": "context",
+        "elements": [
+          {
+            "type": "mrkdwn",
+            "text": "💡 *Pro tip:* Try asking me 'What can't you do?' for a fun response!"
+          }
+        ]
+      }
+    ]
+  });
 });
 
 // Handle /reminder command

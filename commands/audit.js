@@ -24,10 +24,12 @@ async function handleAuditCommand({ command, ack, respond, say }) {
     if (!projectId) {
       const projects = await listRoadmapProjects();
       
+      // Make sure list of projects is visible to everyone in the channel
+      
       if (projects.length === 0) {
         await respond({
-          response_type: 'ephemeral',
-          text: 'No roadmap projects found in the database. Available project IDs: mobile-app, website-redesign, data-platform'
+          response_type: 'in_channel',
+          text: 'No roadmap projects found in the database.'
         });
         return;
       }
