@@ -9,7 +9,7 @@
 
 **Industry**: Technology/Project Management
 **Developer**: Zay2006
-**Completion Date**: 06/04/2025
+**Completion Date**: 06/27/2025
 **GitHub Repository**: [Zay2006/Slacking-Capstone](https://github.com/Zay2006/Slacking-Capstone)
 
 ![Milestone Madness Bot](https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=2070&auto=format&fit=crop&ixlib=rb-1.2.1&auto=format&fit=crop&w=800&h=400)

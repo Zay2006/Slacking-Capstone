@@ -10,6 +10,10 @@ const path = require('path');
 const { App } = require('@slack/bolt');
 const { OpenAI } = require('openai');
 
+// Import command handlers and AI utilities
+const handlers = require('./commands');
+const { initAI } = require('./utils/ai');
+
 // Define OPENAI_API_KEY variable
 let OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -53,7 +57,16 @@ const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   socketMode: true,
   appToken: process.env.SLACK_APP_TOKEN,
-  signingSecret: process.env.SLACK_SIGNING_SECRET
+  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  // Fix for socket timeout issues
+  customAgent: {
+    keepAlive: true,
+    keepAliveMsecs: 3000,  // Send keepalive packets every 3 seconds
+  },
+  // Increase timeouts for more stability
+  clientOptions: {
+    timeout: 10000  // 10 seconds timeout for all requests
+  }
 });
 
 // Global state to track conversations and API status
@@ -61,10 +74,23 @@ const state = {
   activeConversations: {}
 };
 
+// Initialize API status tracking
+global.playlabApiStatus = {
+  available: true,
+  attempts: 0,
+  successes: 0,
+  lastAttempt: null,
+  lastSuccess: null,
+  error: null
+};
+
 // Initialize OpenAI client with environment variable API key
 const openai = new OpenAI({
   apiKey: OPENAI_API_KEY
 });
+
+// Initialize AI module with the OpenAI client
+initAI(openai);
 
 // Utility function to generate AI responses
 async function generateAIResponse(prompt) {
@@ -306,31 +332,50 @@ app.action('help_button', async ({ ack, body, client }) => {
   });
 });
 
-// Handle /reminder command
-app.command('/reminder', async ({ command, ack, respond }) => {
-  await ack();
+// Handle /reminder command using the enhanced implementation
+app.command('/reminder', async ({ command, ack, say, client }) => {
   try {
-    // Show typing indicator
-    await respond({
-      response_type: 'in_channel',
-      text: "Setting reminder..."
-    });
-    
-    // Process reminder
-    const prompt = `Create a reminder for "${command.text}"`;
-    const response = await generateAIResponse(prompt);
-    
-    // Send the response
-    await respond({
-      response_type: 'in_channel',
-      text: response
-    });
+    // Use our enhanced reminder handler from the commands module
+    await handlers.handleReminderCommand({ command, ack, say, client });
   } catch (error) {
     console.error("Error handling /reminder command:", error);
+    await say(`<@${command.user_id}> Sorry, I encountered an error with your reminder: ${error.message}`);
+  }
+});
+
+// Handle the delete_reminder button click action
+app.action('delete_reminder', async ({ ack, payload, respond, client }) => {
+  try {
+    // Use our action handler from the commands module
+    await handlers.handleDeleteReminderAction({ ack, payload, respond, client });
+  } catch (error) {
+    console.error("Error handling delete_reminder action:", error);
     await respond({
       response_type: 'ephemeral',
-      text: "Sorry, I encountered an error setting the reminder."
+      text: `Sorry, I encountered an error deleting your reminder: ${error.message}`
     });
+  }
+});
+
+// Handle /task command for daily task summarization
+app.command('/task', async ({ command, ack, say, client }) => {
+  try {
+    // Use our task handler from the commands module
+    await handlers.handleTaskCommand({ command, ack, say, client });
+  } catch (error) {
+    console.error("Error handling /task command:", error);
+    await say(`<@${command.user_id}> Sorry, I encountered an error summarizing your tasks: ${error.message}`);
+  }
+});
+
+// Handle /convo command for conversation summarization
+app.command('/convo', async ({ command, ack, say, client }) => {
+  try {
+    // Use our conversation summary handler from the commands module
+    await handlers.handleConvoCommand({ command, ack, say, client });
+  } catch (error) {
+    console.error("Error handling /convo command:", error);
+    await say(`<@${command.user_id}> Sorry, I encountered an error summarizing the conversation: ${error.message}`);
   }
 });
 
@@ -339,8 +384,79 @@ app.command('/describe', async ({ ack, respond }) => {
   await ack();
   try {
     await respond({
-      response_type: 'ephemeral',
-      text: "Milestone Madness is an AI-powered Slack bot designed to help teams manage projects, track milestones, and improve collaboration. Use commands like `/audit`, `/draft`, and `/reminder` to interact with me!"
+      response_type: 'in_channel',
+      blocks: [
+        {
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: "✨ Milestone Madness Bot",
+            emoji: true
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Milestone Madness is an AI-powered Slack bot designed to help teams manage projects, track milestones, and improve collaboration."
+          }
+        },
+        {
+          type: "divider"
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*Available Commands:*"
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*📋 Project Management*\n`/audit [project]`\nVerify project data accuracy and identify potential issues.\n\n`/draft [topic]`\nGenerate draft project plans with milestones and timelines."
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*⏰ Time Management*\n`/reminder [task] [time]`\nSet smart reminders with AI-powered time suggestions.\n\n`/task`\nGet a summary of your daily tasks based on your active reminders."
+          }
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*💬 Communication*\n`/convo [optional: number of messages]`\nSummarize recent conversations in the current channel.\n\n`/describe`\nLearn more about the bot's capabilities and commands."
+          }
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: "_You can also tag me in a message or send me a direct message for AI-powered assistance._"
+            }
+          ]
+        },
+        {
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "Try Me",
+                emoji: true
+              },
+              value: "ask_bot",
+              action_id: "try_bot"
+            }
+          ]
+        }
+      ]
     });
   } catch (error) {
     console.error("Error handling /describe command:", error);
@@ -357,19 +473,68 @@ const port = process.env.PORT || 3000;
 // Import database connection testing
 const { testConnection } = require('./utils/database');
 
+// Improved Socket Mode connection handling
+app.error(async (error) => {
+  console.error('Socket Mode error:', error);
+});
+
+// Handle socket mode reconnection explicitly
+function setupSocketModeReconnection(app) {
+  if (app.client && app.client.socketMode) {
+    // Access the underlying WebSocket instance
+    const socketModeClient = app.client.socketMode;
+    
+    // Handle socket connection errors and disconnects
+    socketModeClient.on('disconnect', (event) => {
+      console.log('Socket Mode disconnected! Reconnecting...', event || '');
+    });
+    
+    socketModeClient.on('reconnect', () => {
+      console.log('Socket Mode reconnected successfully!');
+    });
+
+    // Register a ping timer to keep the connection alive
+    let pingCounter = 0;
+    const pingInterval = setInterval(() => {
+      if (socketModeClient.connection?.ws?.readyState === 1) { // 1 is OPEN state
+        try {
+          socketModeClient.connection.ws.ping();
+          pingCounter++;
+          // Only log every 10th ping to reduce console noise
+          if (pingCounter % 10 === 0) {
+            console.log(`Socket keepalive active (ping count: ${pingCounter})`);
+          }
+        } catch (e) {
+          console.warn('Failed to send ping:', e.message);
+        }
+      }
+    }, 30000); // Ping every 30 seconds
+
+    // Clean up on process exit
+    process.on('SIGINT', () => {
+      clearInterval(pingInterval);
+      process.exit(0);
+    });
+  }
+}
+
 // Start the app
 (async () => {
   try {
     // Test database connection
-    console.log('Testing database connection...');
-    await testConnection();
-
-    // Start the Slack app
+    console.log("Testing database connection...");
+    const connection = await testConnection();
+    console.log("✅ Database connection successful!", new Date().toISOString());
+    
+    // Start the app server
     await app.start(port);
-    console.log('⚡️ Milestone Madness bot is running in Socket Mode!');
-    console.log('📡 No need for tunnels or public URLs with Socket Mode');
+    console.log(`✅ Milestone Madness is running on port ${port}!`);
+    
+    // Setup socket mode reconnection after app starts
+    setupSocketModeReconnection(app);
+    console.log('Socket Mode reconnection handler initialized');
   } catch (error) {
-    console.error('Failed to start app:', error);
+    console.error("Error starting the application:", error);
     console.log('\n\n---- TROUBLESHOOTING ----');
     console.log('1. Check your .env file has the correct tokens');
     console.log('2. Verify your app has the required scopes');

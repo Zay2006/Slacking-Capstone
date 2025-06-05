@@ -36,6 +36,12 @@ function getFallbackResponse(userMessage, commandType = 'message') {
     case 'reminder':
       return `I'd like to help you set a reminder for "${shortUserMessage}", but I'm having trouble accessing my AI capabilities at the moment. Please try again soon, or feel free to ask for assistance with something else.`;
     
+    case 'task':
+      return `I'd like to help you summarize your daily tasks, but I'm currently having trouble connecting to my AI services. Please try again in a few minutes, or let me know if there's something else I can help with.`;
+    
+    case 'conversation':
+      return `I'd like to help you summarize the recent conversation, but I'm currently experiencing some technical difficulties with my AI capabilities. Please try again shortly, or let me know if there's another way I can assist you.`;
+    
     case 'direct':
       return `Thanks for your message about "${shortUserMessage}". I'm currently having trouble connecting to my AI services. Please try again in a few minutes, or let me know if there's something else I can help with.`;
     
