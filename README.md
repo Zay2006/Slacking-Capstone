@@ -57,7 +57,19 @@ Milestone Madness is an intelligent Slack bot that seamlessly integrates AI-powe
    - Suggests optimal timeframes and task breakdowns
    - Prevents milestone slippage through timely notifications
 
-5. **Engaging User Experience**
+5. **Task Management**
+   - `/task` command creates and manages project tasks
+   - Assigns tasks to team members with deadlines
+   - Tracks completion status and sends updates
+   - Integrates with project milestones and timelines
+
+6. **Enhanced Communication**
+   - `/convo` command initiates structured conversations on specific topics
+   - Facilitates team discussions with AI-guided prompts
+   - Archives conversation threads for future reference
+   - Generates summaries of key discussion points
+
+7. **Engaging User Experience**
    - Witty, snarky responses to increase team engagement
    - Visual command interface with Slack Block Kit
    - Comprehensive help system with examples
@@ -152,6 +164,26 @@ TABLE reminders (
   reminder_time TIMESTAMP WITH TIME ZONE NOT NULL,
   completed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+TABLE tasks (
+  id SERIAL PRIMARY KEY,
+  project_id VARCHAR(255) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  due_date TIMESTAMP WITH TIME ZONE,
+  status VARCHAR(50) NOT NULL,
+  owner VARCHAR(255),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+TABLE conversations (
+  id SERIAL PRIMARY KEY,
+  channel_id VARCHAR(255) NOT NULL,
+  topic VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 ```
 
@@ -261,6 +293,77 @@ async function handleDescribeCommand({ command, ack, respond }) {
 }
 ```
 
+#### Component 3: Task Management Command
+
+Provides task creation and management through the `/task` command:
+
+```javascript
+async function handleTaskCommand({ command, ack, respond, client }) {
+  await ack();
+  
+  const { text } = command;
+  const [action, ...taskDetails] = text.split(' ');
+  
+  switch (action.toLowerCase()) {
+    case 'create':
+      await createNewTask(taskDetails.join(' '), command.user_id, respond, client);
+      break;
+    case 'list':
+      await listUserTasks(command.user_id, respond);
+      break;
+    case 'complete':
+      await markTaskComplete(taskDetails.join(' '), command.user_id, respond);
+      break;
+    case 'assign':
+      // Format: /task assign @username Task description
+      const assigneeMatch = taskDetails[0].match(/<@([A-Z0-9]+)>/);
+      if (assigneeMatch) {
+        const assigneeId = assigneeMatch[1];
+        const taskDescription = taskDetails.slice(1).join(' ');
+        await assignTask(taskDescription, command.user_id, assigneeId, respond, client);
+      } else {
+        await respond({
+          text: "Please specify a valid user to assign the task to."
+        });
+      }
+      break;
+    default:
+      await respond({
+        text: "Available task commands: create, list, complete, assign"
+      });
+  }
+}
+```
+
+#### Component 4: Conversation Manager
+
+Facilitates structured conversations with the `/convo` command:
+
+```javascript
+async function handleConvoCommand({ command, ack, respond, client }) {
+  await ack();
+  
+  const { text } = command;
+  const [action, ...convoDetails] = text.split(' ');
+  
+  switch (action.toLowerCase()) {
+    case 'start':
+      await startNewConversation(convoDetails.join(' '), command.channel_id, command.user_id, respond, client);
+      break;
+    case 'summary':
+      await generateConversationSummary(command.channel_id, respond);
+      break;
+    case 'archive':
+      await archiveConversation(command.channel_id, respond);
+      break;
+    default:
+      await respond({
+        text: "Available conversation commands: start, summary, archive"
+      });
+  }
+}
+```
+
 #### AI Integration
 
 Securely connects to OpenAI API for generating responses:
@@ -341,6 +444,8 @@ The bot uses Slack's built-in OAuth and token-based security model:
 4. **Data review**: Project managers use `/audit` to analyze project health and milestones
 5. **Content creation**: Team members use `/draft` for standardized reports and documentation
 6. **Task management**: All members utilize `/reminder` to stay on track with deadlines
+7. **Task creation**: Team members use `/task` to create and manage tasks
+8. **Structured conversations**: Team members use `/convo` to initiate structured conversations
 
 ### Key Screens and Components
 
@@ -488,7 +593,8 @@ The codebase is organized with a modular architecture for better maintainability
 │   ├── describe.js    # /describe command handler
 │   ├── draft.js       # /draft command handler
 │   ├── index.js       # Command exports
-│   └── reminder.js    # /reminder command handler
+│   ├── task.js        # /task command handler
+│   └── convo.js       # /convo command handler
 ├── utils/             # Utility functions
 │   ├── ai.js          # AI functionality (OpenAI integration)
 │   └── database.js    # PostgreSQL database integration
@@ -622,7 +728,7 @@ npm start
 1. Create a new Slack App at https://api.slack.com/apps
 2. Enable Socket Mode and generate an app-level token
 3. Add bot scopes: `chat:write`, `commands`, `app_mentions:read`, `im:history`
-4. Create slash commands: `/describe`, `/audit`, `/draft`, `/reminder`
+4. Create slash commands: `/describe`, `/audit`, `/draft`, `/reminder`, `/task`, `/convo`
 5. Enable interactivity and create action handlers
 6. Install the app to your workspace
 

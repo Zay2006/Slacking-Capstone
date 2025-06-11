@@ -1,11 +1,17 @@
 // audit.js - Handler for /audit slash command
 const { getAIResponse } = require('../utils/ai');
-const { getRoadmapData, listRoadmapProjects } = require('../utils/database');
+const { Pool } = require('pg');
 const { OpenAI } = require('openai');
 
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
+});
+
+// Initialize PostgreSQL pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // Required for Supabase PostgreSQL connections
 });
 
 /**
@@ -16,77 +22,82 @@ async function handleAuditCommand({ command, ack, respond, say }) {
   // Acknowledge the command request
   await ack();
   
+  // Show typing indicator
+  await respond({
+    text: "Analyzing roadmap data...",
+    response_type: 'ephemeral'
+  });
+  
   try {
-    // Extract project ID from command text or use a default
-    let projectId = command.text.trim();
+    // Get all issues with missing data using direct PostgreSQL query
+    const query = `
+      SELECT 
+        i.id,
+        i.issue_code,
+        i.issue_name,
+        i.public_description,
+        i.description_missing,
+        i.theme_missing,
+        p.name AS pillar_name,
+        t.name AS theme_name,
+        w.name AS workspace_name
+      FROM 
+        public.issues i
+      LEFT JOIN 
+        public.pillars p ON i.pillar_id = p.id
+      LEFT JOIN 
+        public.themes t ON i.theme_id = t.id
+      LEFT JOIN 
+        public.workspaces w ON i.workspace_id = w.id
+      WHERE 
+        i.description_missing = true OR i.theme_missing = true
+    `;
     
-    // If no project ID provided, list available projects
-    if (!projectId) {
-      const projects = await listRoadmapProjects();
-      
-      // Make sure list of projects is visible to everyone in the channel
-      
-      if (projects.length === 0) {
-        await respond({
-          response_type: 'in_channel',
-          text: 'No roadmap projects found in the database.'
-        });
-        return;
-      }
-      
-      // Format project list
-      const projectList = projects.map(p => `• *${p.project_id}*: ${p.name}`).join('\n');
-      
+    // Execute the query
+    const result = await pool.query(query);
+    const data = result.rows;
+    
+    if (data.length === 0) {
       await respond({
-        response_type: 'ephemeral',
-        blocks: [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: '*Available roadmap projects:*\n' + projectList
-            }
-          },
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: 'To audit a project, use `/audit [project-id]`'
-            }
-          }
-        ]
+        response_type: 'in_channel',
+        text: '✅ Great news! No issues with missing data were found in the database.'
       });
       return;
     }
     
-    // Show typing indicator
-    await respond({
-      response_type: 'ephemeral', 
-      text: `🔍 Analyzing roadmap data for *${projectId}*...`
-    });
+    // Group the issues by what's missing
+    const missingDesc = data.filter(issue => issue.description_missing).map(i => i.issue_code);
+    const missingTheme = data.filter(issue => issue.theme_missing).map(i => i.issue_code);
     
-    // Get roadmap data from database
-    const roadmapData = await getRoadmapData(projectId);
+    // Format the data for OpenAI analysis
+    const auditData = {
+      total_issues: data.length,
+      issues_with_missing_descriptions: missingDesc.length,
+      issues_with_missing_themes: missingTheme.length,
+      issue_details: data.map(issue => ({
+        code: issue.issue_code,
+        name: issue.issue_name,
+        workspace: issue.workspace_name || 'Not assigned',
+        pillar: issue.pillar_name || 'Not assigned',
+        theme: issue.theme_name || 'Not assigned',
+        missing: [
+          issue.description_missing ? 'description' : null,
+          issue.theme_missing ? 'theme' : null
+        ].filter(Boolean)
+      }))
+    };
     
-    if (!roadmapData) {
-      await respond({
-        response_type: 'ephemeral',
-        text: `❌ No roadmap data found for project: *${projectId}*\nAvailable project IDs: mobile-app, website-redesign, data-platform`
-      });
-      return;
-    }
-    
-    // Use OpenAI to analyze the roadmap data
+    // Use OpenAI to analyze the issues data
     const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages: [
         {
           role: 'system',
-          content: 'You are a project management expert specializing in roadmap assessment. Analyze the provided project roadmap and provide actionable insights. Be specific, concise, and practical.'
+          content: 'You are a project management expert specializing in data completeness assessment. Analyze the provided issue tracking data and provide actionable insights about missing data. Be specific, concise, and practical.'
         },
         {
           role: 'user',
-          content: `Analyze this project roadmap and provide a detailed audit:\n\n${JSON.stringify(roadmapData.data, null, 2)}`
+          content: `Analyze these issues with missing data and provide recommendations for improving data quality:\n\n${JSON.stringify(auditData, null, 2)}`
         }
       ],
       temperature: 0.7,
@@ -95,9 +106,6 @@ async function handleAuditCommand({ command, ack, respond, say }) {
     // Get AI response
     const auditResult = completion.choices[0].message.content;
     
-    // Format project name
-    const projectName = roadmapData.data.name || projectId;
-    
     // Send the analysis back to Slack
     await say({
       blocks: [
@@ -105,7 +113,7 @@ async function handleAuditCommand({ command, ack, respond, say }) {
           type: 'header',
           text: {
             type: 'plain_text',
-            text: `📊 Roadmap Audit: ${projectName}`,
+            text: '📊 Data Completeness Audit',
             emoji: true
           }
         },
@@ -114,7 +122,7 @@ async function handleAuditCommand({ command, ack, respond, say }) {
           elements: [
             {
               type: 'mrkdwn',
-              text: `*Requested by:* <@${command.user_id}> | *Status:* ${roadmapData.data.status || 'Unknown'} | *Completion:* ${roadmapData.data.completion_percentage || 0}%`
+              text: `*Requested by:* <@${command.user_id}> | *Total issues with gaps:* ${data.length} | *Missing descriptions:* ${missingDesc.length} | *Missing themes:* ${missingTheme.length}`
             }
           ]
         },
@@ -129,6 +137,15 @@ async function handleAuditCommand({ command, ack, respond, say }) {
           }
         }
       ]
+    });
+    
+    // Also send a detailed breakdown in a thread
+    const missingDetails = data.map(issue => {
+      return `• *${issue.issue_code} ${issue.issue_name}*: Missing ${issue.description_missing && issue.theme_missing ? 'description and theme' : issue.description_missing ? 'description' : 'theme'}`;
+    }).join('\n');
+    
+    await say({
+      text: `*Detailed Issues Report*\n${missingDetails}`
     });
   } catch (error) {
     console.error('Error handling /audit command:', error);

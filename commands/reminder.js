@@ -89,10 +89,10 @@ function formatDateForDisplay(dateTimeStr) {
 }
 
 /**
- * Schedule a reminder using Slack's reminders.add API
+ * Schedule a reminder using Slack's chat.scheduleMessage API (works with bot tokens)
  * @param {Object} reminderData - Reminder details
  * @param {Object} client - Slack client
- * @returns {Promise<Object>} - Slack reminder response
+ * @returns {Promise<Object>} - Scheduled message response
  */
 async function scheduleReminder(reminderData, client) {
   const { userId, text, time, channel } = reminderData;
@@ -108,28 +108,50 @@ async function scheduleReminder(reminderData, client) {
   const timestamp = Math.floor(reminderTime.getTime() / 1000);
   
   try {
-    // Use Slack's reminders.add API
-    const response = await client.reminders.add({
-      text: text,
-      time: timestamp,
-      user: userId
+    // Use chat.scheduleMessage which works with bot tokens
+    const response = await client.chat.scheduleMessage({
+      channel: channel, // Send to the channel where reminder was created
+      text: `🔔 <@${userId}> Reminder: ${text}`,
+      post_at: timestamp,
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `🔔 <@${userId}> *Reminder:* ${text}`
+          }
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: `Scheduled by <@${userId}> on ${new Date().toLocaleString()}`
+            }
+          ]
+        }
+      ]
     });
 
-    // Store the reminder ID in our tracking object
-    const reminderId = response.reminder.id;
+    // Store the scheduled message info
+    const reminderId = response.scheduled_message_id;
     activeReminders[reminderId] = {
       id: reminderId,
       userId,
       text,
       time: reminderTime,
       channel,
-      slackReminder: true
+      scheduled_message_id: reminderId
     };
 
-    return response.reminder;
+    return {
+      id: reminderId,
+      text,
+      time: timestamp
+    };
   } catch (error) {
-    console.error('Error creating Slack reminder:', error);
-    throw new Error(`Failed to create Slack reminder: ${error.message}`);
+    console.error('Error scheduling reminder message:', error);
+    throw new Error(`Failed to schedule reminder: ${error.message}`);
   }
 }
 
@@ -328,12 +350,17 @@ async function handleReminderCommand({ command, ack, say, client }) {
  */
 async function listUserReminders(userId, channelId, client, say) {
   try {
-    // Use Slack's reminders.list API
-    const response = await client.reminders.list({
-      user: userId
+    // Use Slack's scheduledMessages.list API (which works with bot tokens)
+    const response = await client.chat.scheduledMessages.list({
+      channel: channelId // Scheduled messages are channel-specific
     });
     
-    const reminders = response.reminders;
+    // Filter out scheduled messages that aren't actually reminders for this user
+    // You may need to adjust this logic based on how you identify your reminders
+    const reminders = response.scheduled_messages.filter(msg => 
+      // Look for messages that contain @[userId] and Reminder: as pattern
+      msg.text.includes(`<@${userId}>`) && msg.text.includes('Reminder:')
+    );
     
     if (!reminders || reminders.length === 0) {
       await say(`<@${userId}> You don't have any active reminders.`);
@@ -350,11 +377,13 @@ async function listUserReminders(userId, channelId, client, say) {
       }
     ];
     
-    // Sort by time (closest first)
-    const sortedReminders = [...reminders].filter(r => !r.complete).sort((a, b) => a.time - b.time);
+    // Sort by post_at time (closest first)
+    const sortedReminders = [...reminders].sort((a, b) => a.post_at - b.post_at);
     
     sortedReminders.forEach(reminder => {
-      const reminderTime = new Date(reminder.time * 1000); // Convert Unix timestamp to JS Date
+      // Extract the actual reminder text without the user mention and prefix
+      const reminderText = reminder.text.replace(`🔔 <@${userId}> Reminder: `, '');
+      const reminderTime = new Date(reminder.post_at * 1000); // Convert Unix timestamp to JS Date
       const displayTime = formatDateForDisplay(reminderTime.toISOString());
       
       reminderBlocks.push({
@@ -362,7 +391,7 @@ async function listUserReminders(userId, channelId, client, say) {
         fields: [
           {
             type: "mrkdwn",
-            text: `*Task:*\n${reminder.text}`
+            text: `*Task:*\n${reminderText}`
           },
           {
             type: "mrkdwn",
@@ -393,6 +422,7 @@ async function listUserReminders(userId, channelId, client, say) {
     }
     
     await say({
+      text: `${userId} Here are your current reminders.`,
       blocks: reminderBlocks
     });
   } catch (error) {
@@ -402,28 +432,29 @@ async function listUserReminders(userId, channelId, client, say) {
 }
 
 /**
- * Delete a reminder
- * @param {string} reminderId - Reminder ID
+ * Delete a scheduled message reminder
+ * @param {string} scheduledMessageId - Scheduled message ID
  * @param {string} userId - User ID
  * @param {string} channelId - Channel ID
  * @param {Object} client - Slack client
  * @param {Function} say - Slack say function
  */
-async function deleteReminder(reminderId, userId, channelId, client, say) {
+async function deleteReminder(scheduledMessageId, userId, channelId, client, say) {
   try {
-    // Use Slack's reminders.delete API
-    await client.reminders.delete({
-      reminder: reminderId
+    // Use Slack's chat.deleteScheduledMessage API
+    await client.chat.deleteScheduledMessage({
+      channel: channelId,
+      scheduled_message_id: scheduledMessageId
     });
     
     // Clean up our tracking object if it exists there
-    if (activeReminders[reminderId]) {
-      delete activeReminders[reminderId];
+    if (activeReminders[scheduledMessageId]) {
+      delete activeReminders[scheduledMessageId];
     }
     
     await say(`<@${userId}> Your reminder has been deleted.`);
   } catch (error) {
-    console.error('Error deleting reminder:', error);
+    console.error('Error deleting scheduled reminder:', error);
     await say(`<@${userId}> Sorry, I couldn't delete that reminder: ${error.message}`);
   }
 }
@@ -438,18 +469,20 @@ async function deleteReminder(reminderId, userId, channelId, client, say) {
 async function handleDeleteReminderAction({ payload, client, ack, respond }) {
   await ack();
   
-  const reminderId = payload.value;
+  const scheduledMessageId = payload.value;
   const userId = payload.user.id;
+  const channel = payload.channel.id;
   
   try {
-    // Use Slack's reminders.delete API
-    await client.reminders.delete({
-      reminder: reminderId
+    // Use Slack's chat.deleteScheduledMessage API
+    await client.chat.deleteScheduledMessage({
+      channel: channel,
+      scheduled_message_id: scheduledMessageId
     });
     
     // Clean up our tracking object if it exists there
-    if (activeReminders[reminderId]) {
-      delete activeReminders[reminderId];
+    if (activeReminders[scheduledMessageId]) {
+      delete activeReminders[scheduledMessageId];
     }
     
     // Update the message to show the reminder was deleted
@@ -458,7 +491,7 @@ async function handleDeleteReminderAction({ payload, client, ack, respond }) {
       text: `✅ <@${userId}> Your reminder has been deleted.`
     });
   } catch (error) {
-    console.error('Error handling delete reminder action:', error);
+    console.error('Error deleting scheduled message from button:', error);
     await respond({
       replace_original: false,
       text: `⚠️ <@${userId}> Sorry, I couldn't delete that reminder: ${error.message}`

@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { App } = require('@slack/bolt');
 const { OpenAI } = require('openai');
+const { createClient } = require('@supabase/supabase-js');
 
 // Import command handlers and AI utilities
 const handlers = require('./commands');
@@ -91,6 +92,51 @@ const openai = new OpenAI({
 
 // Initialize AI module with the OpenAI client
 initAI(openai);
+
+// Initialize database connection using DATABASE_URL
+// We'll use the pg library for direct PostgreSQL access
+const { Pool } = require('pg');
+
+// Get the database URL from environment variables
+let databaseUrl = process.env.DATABASE_URL;
+
+// Try to read database URL from .env if not available in process.env
+if (!databaseUrl) {
+  try {
+    console.log('Reading DATABASE_URL directly from .env file');
+    const envContent = fs.readFileSync(path.resolve(__dirname, '.env'), 'utf8');
+    
+    // Parse the file line by line to find the database URL
+    const lines = envContent.split(/\r?\n/);
+    
+    for (const line of lines) {
+      if (line.startsWith('DATABASE_URL=')) {
+        databaseUrl = line.substring('DATABASE_URL='.length);
+        console.log('Found DATABASE_URL in .env file');
+        break;
+      }
+    }
+  } catch (err) {
+    console.error('Error reading DATABASE_URL from file:', err);
+  }
+}
+
+console.log('DATABASE_URL exists:', !!databaseUrl);
+
+// Initialize PostgreSQL pool
+const pool = new Pool({
+  connectionString: databaseUrl,
+  ssl: { rejectUnauthorized: false } // Required for Supabase PostgreSQL connections
+});
+
+// Test database connection
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('Error connecting to database:', err);
+  } else {
+    console.log('Database connection successful:', res.rows[0]);
+  }
+});
 
 // Utility function to generate AI responses
 async function generateAIResponse(prompt) {
@@ -178,24 +224,10 @@ app.message(async ({ message, client, say }) => {
 });
 
 // Handle /audit command
-app.command('/audit', async ({ command, ack, respond }) => {
-  await ack();
+app.command('/audit', async ({ command, ack, respond, say }) => {
+  // Use the specialized audit handler from commands/audit.js
   try {
-    // Show typing indicator
-    await respond({
-      response_type: 'in_channel',
-      text: "Generating audit report..."
-    });
-    
-    // Generate audit report
-    const prompt = `Create a brief audit report for project "${command.text}"`;
-    const response = await generateAIResponse(prompt);
-    
-    // Send the response
-    await respond({
-      response_type: 'in_channel',
-      text: response
-    });
+    await handlers.handleAuditCommand({ command, ack, respond, say });
   } catch (error) {
     console.error("Error handling /audit command:", error);
     await respond({
