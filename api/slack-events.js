@@ -129,15 +129,16 @@ try {
     
     // Add connection health check
     if (typeof global.vercelPool.query === 'function') {
-      try {
-        // Lightweight query to test the connection
-        const result = await global.vercelPool.query('SELECT NOW() as current_time');
-        console.log(`Database connection verified at ${result.rows?.[0]?.current_time || 'unknown time'}`);
-      } catch (dbError) {
-        console.error('Database connection test failed:', dbError.message);
-        // Don't throw, continue with potentially broken pool
-        // The connection might recover on future invocations
-      }
+      console.log('Running database connection health check...');
+      global.vercelPool.query('SELECT NOW() as current_time')
+        .then(result => {
+          console.log(`Database connection verified at ${result.rows?.[0]?.current_time || 'unknown time'}`);
+        })
+        .catch(dbError => {
+          console.error('Database connection test failed:', dbError.message);
+          // Don't throw, continue with potentially broken pool
+          // The connection might recover on future invocations
+        });
     }
   } else {
     console.warn('Database pool is not available');
