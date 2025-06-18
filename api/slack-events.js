@@ -6,6 +6,9 @@ require('dotenv').config();
 // Import AI utilities
 const { initAI, getAIResponse } = require('../utils/ai');
 
+// Import database manager
+const { dbManager } = require('../utils/database');
+
 // Import command handlers
 const { 
   handleDraftCommand,
@@ -34,6 +37,10 @@ global.playlabApiStatus = {
   attempts: 0,
   lastAttempt: new Date()
 };
+
+// Override individual command's direct database connections
+// to use the more resilient dbManager for Vercel serverless environment
+global.vercelPool = dbManager.pool;
 
 // Initialize receiver for HTTP events with explicit endpoints
 const expressReceiver = new ExpressReceiver({
