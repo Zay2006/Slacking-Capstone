@@ -3,6 +3,9 @@ const { App, ExpressReceiver } = require('@slack/bolt');
 const { OpenAI } = require('openai');
 require('dotenv').config();
 
+// Import AI utilities
+const { initAI, getAIResponse } = require('../utils/ai');
+
 // Import command handlers
 const { 
   handleDraftCommand,
@@ -20,6 +23,17 @@ const {
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+// Initialize AI utility with OpenAI client
+initAI(openai);
+
+// Create global API status tracking object (required by ai.js)
+global.playlabApiStatus = {
+  available: true,
+  error: null,
+  attempts: 0,
+  lastAttempt: new Date()
+};
 
 // Initialize receiver for HTTP events with explicit endpoints
 const expressReceiver = new ExpressReceiver({
