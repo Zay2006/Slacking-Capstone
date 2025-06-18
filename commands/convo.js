@@ -6,13 +6,16 @@ const { getAIResponse } = require('../utils/ai');
  * @param {Object} params - Command parameters
  * @returns {Promise<void>}
  */
-async function handleConvoCommand({ command, ack, say, client }) {
-  await ack();
-  
+async function handleConvoCommand({ command, respond, client }) {
   try {
     const userId = command.user_id;
     const channelId = command.channel_id;
-    const loadingMessage = await say(`Summarizing recent conversations in this channel...`);
+    
+    // Initial response
+    await respond({
+      response_type: 'ephemeral',
+      text: `Summarizing recent conversations in this channel...`
+    });
     
     let limit = 50; // Default message limit
     
@@ -25,17 +28,30 @@ async function handleConvoCommand({ command, ack, say, client }) {
     }
     
     // Get recent messages from the channel
-    const historyResponse = await client.conversations.history({
-      channel: channelId,
-      limit: limit
-    });
-    
-    const messages = historyResponse.messages || [];
+    let messages = [];
+    try {
+      if (client && client.conversations && client.conversations.history) {
+        const historyResponse = await client.conversations.history({
+          channel: channelId,
+          limit: limit
+        });
+        
+        messages = historyResponse.messages || [];
+      } else {
+        throw new Error('Slack client not available in this environment');
+      }
+    } catch (slackError) {
+      console.error('Error fetching conversation history:', slackError);
+      await respond({
+        response_type: 'ephemeral',
+        text: `I couldn't access the channel history: ${slackError.message}`
+      });
+      return;
+    }
     
     if (messages.length === 0) {
-      await client.chat.update({
-        channel: loadingMessage.channel,
-        ts: loadingMessage.ts,
+      await respond({
+        response_type: 'ephemeral',
         text: "There are no recent messages to summarize in this channel."
       });
       return;
@@ -49,46 +65,65 @@ async function handleConvoCommand({ command, ack, say, client }) {
       // Skip bot messages that are just status updates or our own summaries
       if (msg.subtype === 'bot_message' && 
           (msg.text.includes('Summarizing recent conversations') || 
-           msg.text.includes('Daily Task Summary'))) {
+           msg.text.includes('Conversation Summary'))) {
         continue;
       }
       
-      // Get user info if available
-      let userName = 'Unknown User';
-      if (msg.user) {
-        try {
+      let sender = "Unknown User";
+      try {
+        // Try to get user info, but don't fail if we can't
+        if (msg.user && client && client.users && client.users.info) {
           const userInfo = await client.users.info({ user: msg.user });
-          userName = userInfo.user.real_name || userInfo.user.name || msg.user;
-        } catch (e) {
-          userName = msg.user;
+          sender = userInfo.user.real_name || userInfo.user.name || `<@${msg.user}>`;
+        } else {
+          sender = `<@${msg.user || 'unknown'}>`;
         }
+      } catch (userError) {
+        console.warn('Could not fetch user info:', userError.message);
+        sender = `<@${msg.user || 'unknown'}>`;
       }
       
-      conversationText += `${userName}: ${msg.text}\n\n`;
+      // Add the message to our conversation text
+      conversationText += `${sender}: ${msg.text || "[No text content]"}\n\n`;
     }
     
-    // Get summary from AI
-    const summary = await getAIResponse(
-      `Summarize the following conversation from a Slack channel:\n\n${conversationText}\n\n` + 
-      `Please provide a concise summary that includes:\n` +
-      `1. Main topics discussed\n` +
-      `2. Any decisions made or action items\n` +
-      `3. Key questions or unresolved issues\n` +
-      `Format this clearly with bullet points and keep it brief and informative.`,
-      'conversation'
-    );
+    // Get AI to summarize the conversation
+    console.log('Getting AI summary of conversation...');
+    const summaryPrompt = `
+      Summarize the following Slack conversation in a clear, concise way:
+      ${conversationText}
+      
+      Focus on:
+      1. Main topics discussed
+      2. Any decisions made
+      3. Action items or follow-ups mentioned
+      4. Key questions raised
+      
+      Format your response as a professional Slack message with sections.
+    `;
     
-    // Update the loading message with the summary
-    await client.chat.update({
-      channel: loadingMessage.channel,
-      ts: loadingMessage.ts,
+    const summary = await getAIResponse(summaryPrompt, 'convo');
+    
+    // Post the summary to the channel
+    await respond({
+      response_type: 'in_channel',
       blocks: [
         {
-          type: "section",
+          type: "header",
           text: {
-            type: "mrkdwn",
-            text: `*Conversation Summary*`
+            type: "plain_text",
+            text: "💬 Conversation Summary",
+            emoji: true
           }
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: `*Requested by:* <@${userId}> | *Messages analyzed:* ${messages.length}`
+            }
+          ]
         },
         {
           type: "divider"
@@ -99,21 +134,15 @@ async function handleConvoCommand({ command, ack, say, client }) {
             type: "mrkdwn",
             text: summary
           }
-        },
-        {
-          type: "context",
-          elements: [
-            {
-              type: "mrkdwn",
-              text: `_Based on the last ${messages.length} messages in this channel_`
-            }
-          ]
         }
       ]
     });
   } catch (error) {
     console.error('Error handling /convo command:', error);
-    await say(`<@${command.user_id}> Sorry, I encountered an error generating the conversation summary: ${error.message}`);
+    await respond({
+      response_type: 'ephemeral',
+      text: `Sorry, I encountered an error summarizing the conversation: ${error.message}`
+    });
   }
 }
 

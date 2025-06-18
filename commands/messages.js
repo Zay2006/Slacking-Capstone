@@ -1,55 +1,82 @@
 // messages.js - Handlers for direct messages and mentions
 const { getAIResponse } = require('../utils/ai');
 
-// Track conversations to prevent duplicate responses
-const messageTracker = new Map();
+// Note: In a serverless environment, this won't persist between function invocations
+// This is just a temporary solution to prevent duplicate responses within a single function execution
+const processingMessages = new Set();
 
 /**
  * Handle direct messages to the bot
  */
-async function handleDirectMessage({ message, say, client }) {
+async function handleDirectMessage({ message, client }) {
   try {
-    // Skip if we're already processing this message or it's undefined/empty
-    if (!message || !message.ts || !message.text || messageTracker.has(message.ts)) {
+    // Skip if message is undefined/empty or already being processed
+    if (!message || !message.ts || !message.text) {
+      return;
+    }
+    
+    const messageId = message.ts;
+    if (processingMessages.has(messageId)) {
       return;
     }
     
     // Mark this message as being processed
-    messageTracker.set(message.ts, true);
+    processingMessages.add(messageId);
     
     // Get message text and trim it
     const userText = message.text.trim() || '?';
-    console.log(`Processing direct message: "${userText.substring(0, 20)}"`);
+    console.log(`Processing direct message: "${userText.substring(0, 20)}..."`);
     
-    // Show typing indicator
-    const thinking = await say('_Thinking..._');
+    // Post thinking message
+    let thinkingMsg;
+    try {
+      thinkingMsg = await client.chat.postMessage({
+        channel: message.channel,
+        text: '_Thinking..._'
+      });
+    } catch (postError) {
+      console.error('Failed to post thinking message:', postError);
+      // Continue without the thinking message
+    }
     
     // Get AI response for the direct message with the 'direct' command type
     const response = await getAIResponse(userText, 'direct');
     
     // Update the thinking message with the actual response
-    try {
-      await client.chat.update({
+    if (thinkingMsg && thinkingMsg.ts) {
+      try {
+        await client.chat.update({
+          channel: message.channel,
+          ts: thinkingMsg.ts,
+          text: response
+        });
+      } catch (updateError) {
+        // If update fails, just send a new message
+        console.warn('Failed to update message, sending new one:', updateError.message);
+        await client.chat.postMessage({
+          channel: message.channel,
+          text: response
+        });
+      }
+    } else {
+      // If no thinking message was successfully posted, send the response directly
+      await client.chat.postMessage({
         channel: message.channel,
-        ts: thinking.ts,
         text: response
       });
-    } catch (updateError) {
-      // If update fails, just send a new message
-      console.warn('Failed to update message, sending new one:', updateError.message);
-      await say(response);
     }
     
-    // Remove from tracker after a short delay to prevent duplicate processing
-    setTimeout(() => {
-      messageTracker.delete(message.ts);
-    }, 5000);
+    // Clean up
+    processingMessages.delete(messageId);
   } catch (error) {
     console.error('Error handling direct message:', error);
-    await say("I'm having trouble processing your message right now. Please try again later.");
-    // Remove from tracker on error
-    if (message && message.ts) {
-      messageTracker.delete(message.ts);
+    try {
+      await client.chat.postMessage({
+        channel: message.channel,
+        text: "I'm having trouble processing your message right now. Please try again later."
+      });
+    } catch (finalError) {
+      console.error('Failed to send error message:', finalError);
     }
   }
 }
@@ -57,27 +84,44 @@ async function handleDirectMessage({ message, say, client }) {
 /**
  * Handle app mentions (@MilestoneMadness in channels)
  */
-async function handleAppMention({ event, say, client }) {
+async function handleAppMention({ event, client }) {
   try {
     // Skip if we're already processing this message or it's undefined/empty
-    if (!event || !event.ts || !event.text || messageTracker.has(event.ts)) {
+    if (!event || !event.ts || !event.text) {
+      return;
+    }
+    
+    const messageId = event.ts;
+    if (processingMessages.has(messageId)) {
       return;
     }
     
     // Mark this event as being processed
-    messageTracker.set(event.ts, true);
+    processingMessages.add(messageId);
     
-    // Show typing indicator
-    const thinking = await say('_Thinking..._');
+    // Post thinking message
+    let thinkingMsg;
+    try {
+      thinkingMsg = await client.chat.postMessage({
+        channel: event.channel,
+        text: '_Thinking..._'
+      });
+    } catch (postError) {
+      console.error('Failed to post thinking message:', postError);
+      // Continue without the thinking message
+    }
     
     // Remove the mention from the message text
-    const mentionPattern = new RegExp(`<@${event.bot_id}>`, 'g');
+    const botUserId = event.authorizations?.[0]?.user_id || event.bot_id;
+    const mentionPattern = new RegExp(`<@${botUserId}>`, 'g');
     const userText = (event.text || '').replace(mentionPattern, '').trim() || '?';
     
-    console.log(`Processing mention: "${userText.substring(0, 20)}"`);
+    console.log(`Processing mention: "${userText.substring(0, 20)}..."`);
     
     // Check if the message contains a fun "is there anything you can't do" question
     const canDoPattern = /is there anything you (can('t|not)|cannot) do/i;
+    let response;
+    
     if (canDoPattern.test(userText)) {
       const wittyResponses = [
         "I can't make a decent cup of coffee, but I can help you organize your project milestones! ☕️",
@@ -86,53 +130,45 @@ async function handleAppMention({ event, say, client }) {
         "I can't beat you at ping pong, but I can help you track your tournament milestones! 🏓",
         "I can't write your code for you, but I can help you plan your development sprints! 💻"
       ];
-      const randomResponse = wittyResponses[Math.floor(Math.random() * wittyResponses.length)];
-      
+      response = wittyResponses[Math.floor(Math.random() * wittyResponses.length)];
+    } else {
+      // Get AI response for the mention with the 'mention' command type
+      response = await getAIResponse(userText, 'mention');
+    }
+    
+    // Update the thinking message with the actual response or send a new message
+    if (thinkingMsg && thinkingMsg.ts) {
       try {
         await client.chat.update({
           channel: event.channel,
-          ts: thinking.ts,
-          text: randomResponse
+          ts: thinkingMsg.ts,
+          text: response
         });
       } catch (updateError) {
-        await say(randomResponse);
+        console.warn('Failed to update message, sending new one:', updateError.message);
+        await client.chat.postMessage({
+          channel: event.channel,
+          text: response
+        });
       }
-      
-      // Remove from tracker after a short delay
-      setTimeout(() => {
-        messageTracker.delete(event.ts);
-      }, 5000);
-      
-      return;
-    }
-    
-    // Get AI response for the mention with the 'mention' command type
-    const response = await getAIResponse(userText, 'mention');
-    
-    // Update the thinking message with the actual response
-    try {
-      await client.chat.update({
+    } else {
+      await client.chat.postMessage({
         channel: event.channel,
-        ts: thinking.ts,
         text: response
       });
-    } catch (updateError) {
-      // If update fails, just send a new message
-      console.warn('Failed to update message, sending new one:', updateError.message);
-      await say(response);
     }
     
-    // Remove from tracker after a short delay
-    setTimeout(() => {
-      messageTracker.delete(event.ts);
-    }, 5000);
+    // Clean up
+    processingMessages.delete(messageId);
   } catch (error) {
     console.error('Error handling app mention:', error);
-    await say("I'm having trouble processing your message right now. Please try again later.");
-    
-    // Remove from tracker on error
-    if (event && event.ts) {
-      messageTracker.delete(event.ts);
+    try {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "I'm having trouble processing your mention right now. Please try again later."
+      });
+    } catch (finalError) {
+      console.error('Failed to send error message:', finalError);
     }
   }
 }

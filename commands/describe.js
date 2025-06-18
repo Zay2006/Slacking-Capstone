@@ -4,11 +4,9 @@
  * Handle the /describe slash command
  * Provides information about what the Milestone Madness bot can do
  */
-async function handleDescribeCommand({ command, ack, respond }) {
-  await ack();
+async function handleDescribeCommand({ command, respond }) {
   try {
-    // For slash commands, we need to use respond instead of say with response_type: 'in_channel'
-    // to make the message visible to everyone
+    // For slash commands in serverless, we use respond with response_type: 'in_channel'
     await respond({
       response_type: 'in_channel',
       blocks: [
@@ -82,7 +80,6 @@ async function handleDescribeCommand({ command, ack, respond }) {
     });
   } catch (error) {
     console.error('Error handling /describe command:', error);
-    await say(`<@${command.user_id}> Sorry, I encountered an error displaying my capabilities. Please try again later.`);
   }
 }
 

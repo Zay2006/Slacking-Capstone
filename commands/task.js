@@ -6,19 +6,42 @@ const { getAIResponse } = require('../utils/ai');
  * @param {Object} params - Command parameters
  * @returns {Promise<void>}
  */
-async function handleTaskCommand({ command, ack, say, client }) {
-  await ack();
-  
+async function handleTaskCommand({ command, respond, client }) {
   try {
     const userId = command.user_id;
-    const loadingMessage = await say(`Gathering task summary for <@${userId}>...`);
     
-    // Get user's reminders through the Slack API
-    const reminderResponse = await client.reminders.list({
-      user: userId
+    // Initial response
+    await respond({
+      response_type: 'ephemeral',
+      text: `Gathering task summary for <@${userId}>...`
     });
     
-    const reminders = reminderResponse.reminders || [];
+    // Check if client is available
+    if (!client || !client.reminders || !client.reminders.list) {
+      await respond({
+        response_type: 'ephemeral',
+        text: `Sorry, I can't access the Slack Reminders API in this environment.`
+      });
+      return;
+    }
+    
+    // Get user's reminders through the Slack API
+    let reminders = [];
+    try {
+      const reminderResponse = await client.reminders.list({
+        user: userId
+      });
+      
+      reminders = reminderResponse.reminders || [];
+    } catch (slackError) {
+      console.error('Error fetching reminders:', slackError);
+      await respond({
+        response_type: 'ephemeral',
+        text: `I couldn't retrieve your reminders: ${slackError.message}`
+      });
+      return;
+    }
+    
     const activeReminders = reminders.filter(r => !r.complete);
     
     // Format reminders for the AI
@@ -34,27 +57,34 @@ async function handleTaskCommand({ command, ack, say, client }) {
     }
     
     // Get summary from AI
-    const summary = await getAIResponse(
-      `Summarize the following tasks for the user and create a prioritized action plan for them:\n\n${reminderText}\n\n` + 
-      `Current time: ${new Date().toLocaleString()}\n` +
-      `Please provide a brief, encouraging summary of their day's tasks with:\n` +
-      `1. A short motivational message at the beginning\n` +
-      `2. A prioritized list of tasks\n` +
-      `3. Time management tips based on their current workload\n` +
-      `Be conversational but concise.`,
-      'task'
-    );
+    console.log('Getting AI task summary...');
+    const summaryPrompt = `
+      Summarize the following tasks for the user and create a prioritized action plan for them:
+
+      ${reminderText}
+
+      Current time: ${new Date().toLocaleString()}
+      
+      Please provide a brief, encouraging summary of their day's tasks with:
+      1. A short motivational message at the beginning
+      2. A prioritized list of tasks
+      3. Time management tips based on their current workload
+      
+      Be conversational but concise.
+    `;
     
-    // Update the loading message with the summary
-    await client.chat.update({
-      channel: loadingMessage.channel,
-      ts: loadingMessage.ts,
+    const summary = await getAIResponse(summaryPrompt, 'task');
+    
+    // Send the summary to the user
+    await respond({
+      response_type: 'ephemeral',
       blocks: [
         {
-          type: "section",
+          type: "header",
           text: {
-            type: "mrkdwn",
-            text: `*Daily Task Summary for <@${userId}>*`
+            type: "plain_text",
+            text: "📋 Your Task Summary",
+            emoji: true
           }
         },
         {
@@ -72,7 +102,7 @@ async function handleTaskCommand({ command, ack, say, client }) {
           elements: [
             {
               type: "mrkdwn",
-              text: `_Based on ${activeReminders.length} active reminder${activeReminders.length === 1 ? '' : 's'}_`
+              text: `_Based on ${activeReminders.length} active reminders_`
             }
           ]
         }
@@ -80,7 +110,10 @@ async function handleTaskCommand({ command, ack, say, client }) {
     });
   } catch (error) {
     console.error('Error handling /task command:', error);
-    await say(`<@${command.user_id}> Sorry, I encountered an error generating your task summary: ${error.message}`);
+    await respond({
+      response_type: 'ephemeral',
+      text: `Sorry, I encountered an error generating your task summary: ${error.message}`
+    });
   }
 }
 

@@ -1,8 +1,25 @@
 // reminder.js - Handler for /reminder slash command
 const { getAIResponse } = require('../utils/ai');
 
-// Global object to store active reminders
+// Global object to store active reminders - NOTE: this won't persist in serverless
+// Consider moving this to a database
 const activeReminders = {};
+
+// Get database pool safely (for future database storage)
+function getPool() {
+  try {
+    if (global.vercelPool) {
+      console.log('Using global vercelPool in reminder command');
+      return global.vercelPool;
+    } else {
+      console.error('Global vercelPool not available');
+      throw new Error('Database connection not available');
+    }
+  } catch (error) {
+    console.error('Error accessing global pool:', error);
+    throw new Error('Database connection not available');
+  }
+}
 
 /**
  * Extract date and time information from a reminder request using AI
@@ -164,33 +181,33 @@ async function scheduleReminder(reminderData, client) {
  * /reminder list - List your current reminders
  * /reminder delete [reminder_id] - Delete a specific reminder
  */
-async function handleReminderCommand({ command, ack, say, client }) {
-  await ack();
+async function handleReminderCommand({ command, respond }) {
   try {
     const reminderText = command.text.trim();
     const userId = command.user_id;
     
     // Handle subcommands
     if (reminderText === 'list' || reminderText === 'show' || reminderText === 'all') {
-      await listUserReminders(userId, command.channel_id, client, say);
+      // In serverless environment, we can't rely on in-memory storage
+      await respond({
+        response_type: 'ephemeral',
+        text: `Sorry, listing reminders isn't available in this deployment. We're working on a database-backed version.`
+      });
       return;
     }
     
     if (reminderText.startsWith('delete') || reminderText.startsWith('remove')) {
-      const parts = reminderText.split(' ');
-      if (parts.length >= 2) {
-        const reminderId = parts[1].trim();
-        await deleteReminder(reminderId, userId, command.channel_id, client, say);
-        return;
-      } else {
-        await say(`<@${userId}> Please specify which reminder to delete, for example: "/reminder delete RmID".`);
-        return;
-      }
+      await respond({
+        response_type: 'ephemeral',
+        text: `Sorry, deleting reminders isn't available in this deployment. We're working on a database-backed version.`
+      });
+      return;
     }
     
     // If no recognized subcommand, create a new reminder
     if (!reminderText) {
-      await say({
+      await respond({
+        response_type: 'ephemeral',
         blocks: [
           {
             type: "section",
@@ -219,7 +236,10 @@ async function handleReminderCommand({ command, ack, say, client }) {
     }
 
     // Show a temporary message while we process
-    const loadingMessage = await say(`Setting up a reminder for <@${userId}>: *${reminderText}*\n\nProcessing...`);
+    const loadingMessage = await respond({
+      response_type: 'ephemeral',
+      text: `Setting up a reminder for <@${userId}>: *${reminderText}*\n\nProcessing...`
+    });
     
     // Parse the date and time from the reminder text
     const { time, text } = await parseReminderDateTime(reminderText);
@@ -235,7 +255,7 @@ async function handleReminderCommand({ command, ack, say, client }) {
           text: text,
           time: time,
           channel: command.channel_id
-        }, client);
+        }, null);
         
         // Analyze the task and provide recommendations
         const timeAnalysis = await getAIResponse(
@@ -248,9 +268,9 @@ async function handleReminderCommand({ command, ack, say, client }) {
         );
         
         // Update the loading message with confirmation and task analysis
-        await client.chat.update({
-          channel: loadingMessage.channel,
-          ts: loadingMessage.ts,
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
           blocks: [
             {
               type: "section",
@@ -308,9 +328,9 @@ async function handleReminderCommand({ command, ack, say, client }) {
       } catch (reminderError) {
         console.error('Error setting reminder:', reminderError);
         
-        await client.chat.update({
-          channel: loadingMessage.channel,
-          ts: loadingMessage.ts,
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
           text: `⚠️ I couldn't set your reminder (${reminderError.message}).\n\n` +
                 `*Task:* ${text}\n` +
                 `*When:* ${displayTime}\n\n` +
@@ -327,9 +347,9 @@ async function handleReminderCommand({ command, ack, say, client }) {
         'reminder'
       );
       
-      await client.chat.update({
-        channel: loadingMessage.channel,
-        ts: loadingMessage.ts,
+      await respond({
+        response_type: 'ephemeral',
+        replace_original: true,
         text: `I couldn't determine when to remind you about "${reminderText}"\n\n` +
               `*Suggestions:*\n${timeAnalysis}\n\n` +
               `Please try again with a specific time, like "/reminder ${reminderText} tomorrow at 3pm".`
@@ -337,7 +357,10 @@ async function handleReminderCommand({ command, ack, say, client }) {
     }
   } catch (error) {
     console.error('Error handling /reminder command:', error);
-    await say(`<@${command.user_id}> Sorry, I encountered an error setting your reminder. Please try again later.`);
+    await respond({
+      response_type: 'ephemeral',
+      text: `<@${command.user_id}> Sorry, I encountered an error setting your reminder. Please try again later.`
+    });
   }
 }
 
@@ -461,41 +484,70 @@ async function deleteReminder(scheduledMessageId, userId, channelId, client, say
 
 /**
  * Handle delete reminder button action
- * @param {Object} payload - Button click payload
+ * @param {Object} body - Button click payload
  * @param {Object} client - Slack client
- * @param {Function} ack - Acknowledge function
- * @param {Function} respond - Respond function
  */
-async function handleDeleteReminderAction({ payload, client, ack, respond }) {
-  await ack();
-  
-  const scheduledMessageId = payload.value;
-  const userId = payload.user.id;
-  const channel = payload.channel.id;
+async function handleDeleteReminderAction({ body, client }) {
+  // Extract values from the action
+  let scheduledMessageId, userId, channel;
   
   try {
+    // Handle different payload structures
+    if (body.actions && body.actions.length > 0) {
+      scheduledMessageId = body.actions[0].value;
+    } else if (body.value) {
+      scheduledMessageId = body.value;
+    } else {
+      throw new Error('Could not find reminder ID in the action payload');
+    }
+    
+    userId = body.user?.id || '';
+    channel = body.channel?.id || '';
+    
+    if (!scheduledMessageId || !userId || !channel) {
+      throw new Error('Missing required information to delete reminder');
+    }
+
+    console.log(`Attempting to delete reminder ${scheduledMessageId} for user ${userId} in channel ${channel}`);
+    
     // Use Slack's chat.deleteScheduledMessage API
     await client.chat.deleteScheduledMessage({
       channel: channel,
       scheduled_message_id: scheduledMessageId
     });
     
-    // Clean up our tracking object if it exists there
+    // Clean up our tracking object if it exists there 
+    // Note: This won't work reliably in serverless environment
     if (activeReminders[scheduledMessageId]) {
       delete activeReminders[scheduledMessageId];
     }
     
-    // Update the message to show the reminder was deleted
-    await respond({
-      replace_original: true,
-      text: `✅ <@${userId}> Your reminder has been deleted.`
+    // Respond to the action
+    await client.chat.postMessage({
+      channel: channel,
+      text: `<@${userId}> Your reminder has been deleted.`
     });
+    
+    return { success: true };
   } catch (error) {
-    console.error('Error deleting scheduled message from button:', error);
-    await respond({
-      replace_original: false,
-      text: `⚠️ <@${userId}> Sorry, I couldn't delete that reminder: ${error.message}`
-    });
+    console.error('Error deleting scheduled reminder:', error);
+    
+    // Try to notify the user if possible
+    if (client && channel) {
+      try {
+        await client.chat.postMessage({
+          channel: channel,
+          text: `<@${userId || 'user'}> Sorry, I couldn't delete that reminder: ${error.message}`
+        });
+      } catch (notifyError) {
+        console.error('Failed to notify user about deletion error:', notifyError);
+      }
+    }
+    
+    return { 
+      success: false,
+      error: error.message
+    };
   }
 }
 

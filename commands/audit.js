@@ -1,18 +1,22 @@
 // audit.js - Handler for /audit slash command
 const { getAIResponse } = require('../utils/ai');
-const { Pool } = require('pg');
-const { OpenAI } = require('openai');
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-// Initialize PostgreSQL pool
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // Required for Supabase PostgreSQL connections
-});
+// Global pool is set up in slack-events.js
+// Use try/catch to handle cases where global pool is not available
+function getPool() {
+  try {
+    if (global.vercelPool) {
+      console.log('Using global vercelPool in audit command');
+      return global.vercelPool;
+    } else {
+      console.error('Global vercelPool not available');
+      throw new Error('Database connection not available');
+    }
+  } catch (error) {
+    console.error('Error accessing global pool:', error);
+    throw new Error('Database connection not available');
+  }
+}
 
 /**
  * Handle the /audit slash command
@@ -29,6 +33,9 @@ async function handleAuditCommand({ command, ack, respond, say }) {
   });
   
   try {
+    // Get database pool safely
+    const pool = getPool();
+    
     // Get all issues with missing data using direct PostgreSQL query
     const query = `
       SELECT 
@@ -88,7 +95,7 @@ async function handleAuditCommand({ command, ack, respond, say }) {
     };
     
     // Use OpenAI to analyze the issues data
-    const completion = await openai.chat.completions.create({
+    const completion = await getAIResponse({
       model: 'gpt-4',
       messages: [
         {
