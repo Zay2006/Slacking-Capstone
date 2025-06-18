@@ -3,13 +3,58 @@ const { App, ExpressReceiver } = require('@slack/bolt');
 const { OpenAI } = require('openai');
 require('dotenv').config();
 
-// Import AI utilities
-const { initAI, getAIResponse } = require('../utils/ai');
+// Global error handler to prevent unhandled promise rejections
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled promise rejection:', error);
+  // Don't crash the serverless function
+});
 
-// Import database manager
-const { dbManager } = require('../utils/database');
+// Set up fallback utilities
+let aiUtils = {
+  initAI: () => {},
+  getAIResponse: async () => "AI service temporarily unavailable"
+};
 
-// Import command handlers
+let dbManager = {
+  pool: null,
+  query: async () => []
+};
+
+let commandHandlers = {
+  handleDraftCommand: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleAuditCommand: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleDescribeCommand: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleReminderCommand: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleTaskCommand: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleConvoCommand: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleDeleteReminderAction: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleDirectMessage: async () => ({ text: "Command handler temporarily unavailable" }),
+  handleAppMention: async () => ({ text: "Command handler temporarily unavailable" })
+};
+
+// Safely import modules with fallbacks
+try {
+  console.log('Loading AI utilities...');
+  aiUtils = require('../utils/ai');
+} catch (error) {
+  console.error('Failed to load AI utilities:', error.message);
+}
+
+try {
+  console.log('Loading database manager...');
+  dbManager = require('../utils/database').dbManager;
+} catch (error) {
+  console.error('Failed to load database manager:', error.message);
+}
+
+try {
+  console.log('Loading command handlers...');
+  commandHandlers = require('../commands');
+} catch (error) {
+  console.error('Failed to load command handlers:', error.message);
+}
+
+// Destructure command handlers safely
 const { 
   handleDraftCommand,
   handleAuditCommand,
@@ -20,38 +65,71 @@ const {
   handleDeleteReminderAction,
   handleDirectMessage,
   handleAppMention
-} = require('../commands');
+} = commandHandlers;
 
-// Initialize OpenAI with environment variable
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Initialize OpenAI with environment variable - use try/catch to prevent crashes
+let openai;
+try {
+  console.log('Initializing OpenAI...');
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+  });
+} catch (error) {
+  console.error('Failed to initialize OpenAI:', error.message);
+  // Create dummy version to prevent crashes
+  openai = {
+    chat: { completions: { create: async () => ({ choices: [{ message: { content: 'Error: AI service unavailable' } }] }) } }
+  };
+}
 
-// Initialize AI utility with OpenAI client
-initAI(openai);
+// Initialize AI utility with OpenAI client - use try/catch
+try {
+  console.log('Initializing AI utilities...');
+  aiUtils.initAI(openai);
+} catch (error) {
+  console.error('Failed to initialize AI utilities:', error.message);
+}
 
 // Create global API status tracking object (required by ai.js)
-global.playlabApiStatus = {
-  available: true,
-  error: null,
-  attempts: 0,
-  lastAttempt: new Date()
-};
+try {
+  console.log('Setting up global status object...');
+  global.playlabApiStatus = {
+    available: true,
+    error: null,
+    attempts: 0,
+    lastAttempt: new Date()
+  };
+} catch (error) {
+  console.error('Error setting up global status object:', error.message);
+}
 
-// Override individual command's direct database connections
-// to use the more resilient dbManager for Vercel serverless environment
-global.vercelPool = dbManager.pool;
+// Only set global pool if database manager is available
+try {
+  console.log('Setting up global database pool...');
+  if (dbManager && dbManager.pool) {
+    global.vercelPool = dbManager.pool;
+  }
+} catch (error) {
+  console.error('Error setting up global database pool:', error.message);
+}
 
 // Initialize receiver for HTTP events with explicit endpoints
-const expressReceiver = new ExpressReceiver({
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
-  processBeforeResponse: true,
-  endpoints: {
-    events: '/slack/events',
-    commands: '/slack/commands',
-    actions: '/slack/interactive-endpoints'
-  }
-});
+let expressReceiver;
+try {
+  console.log('Initializing express receiver...');
+  expressReceiver = new ExpressReceiver({
+    signingSecret: process.env.SLACK_SIGNING_SECRET || 'dummy-secret',
+    processBeforeResponse: true,
+    endpoints: {
+      events: '/slack/events',
+      commands: '/slack/commands',
+      actions: '/slack/interactive-endpoints'
+    }
+  });
+} catch (error) {
+  console.error('Error initializing express receiver:', error.message);
+  throw error; // This is critical - must fail if we can't create the receiver
+}
 
 // Initialize the Slack app with HTTP receiver
 const app = new App({
