@@ -412,6 +412,103 @@ The bot uses Slack's built-in OAuth and token-based security model:
 | `/slack/interactive-endpoints` | POST | Processes interactive components | Yes |
 | `/slack/commands` | POST | Handles slash commands | Yes |
 
+## Deploying Socket Mode to Vercel
+
+### Why This Approach Works
+
+While Vercel is a serverless platform and Socket Mode requires a persistent WebSocket connection, we've implemented a hybrid approach that maintains Socket Mode functionality on Vercel:
+
+1. **Worker Thread Architecture**: A dedicated worker thread maintains the Socket Mode WebSocket connection
+2. **Controller API**: A serverless function manages the worker's lifecycle and health
+3. **Keepalive Mechanism**: Regular pings ensure the worker stays alive
+
+### Deployment Steps
+
+1. **Deploy to Vercel with Socket Mode Support**:
+   ```bash
+   npm install -g vercel
+   vercel login
+   vercel
+   ```
+
+2. **Set Environment Variables in Vercel Dashboard**:
+   - `SLACK_BOT_TOKEN` (xoxb-...)
+   - `SLACK_APP_TOKEN` (xapp-... - Socket Mode app-level token)
+   - `SLACK_SIGNING_SECRET`
+   - `OPENAI_API_KEY`
+   - `DATABASE_URL` (if using database)
+   - `VERCEL_URL` (automatically set by Vercel)
+
+3. **Verify Deployment**:
+   - Visit `https://your-app.vercel.app/socket/status` to see worker status
+   - The worker should automatically start
+
+4. **Set Up Keepalive Service**:
+   There are several options to keep your Socket Mode worker alive:
+
+   **Option A: Use an External Service (recommended)**
+   Set up a simple ping service using:
+   - [Uptime Robot](https://uptimerobot.com/) (Free)
+   - [Cron-job.org](https://cron-job.org/) (Free)
+   - [GitHub Actions](https://github.com/features/actions) with scheduled workflow
+   
+   Configure it to ping `https://your-app.vercel.app/socket/status` every 1-5 minutes.
+
+   **Option B: Deploy the Keepalive Script**
+   Deploy the `scripts/keepalive.js` script to a service like:
+   - [Railway](https://railway.app/)
+   - [Render](https://render.com/)
+   - Your own server
+
+   ```bash
+   # Install dependencies
+   npm install axios
+   
+   # Run the keepalive script
+   node scripts/keepalive.js
+   ```
+
+### Monitoring and Troubleshooting
+
+1. **Check Socket Worker Status**:
+   ```
+   GET https://your-app.vercel.app/socket/status
+   ```
+   
+   Sample response:
+   ```json
+   {
+     "status": "ok",
+     "workerRunning": true,
+     "lastHeartbeat": "2025-06-18T13:45:22.123Z"
+   }
+   ```
+
+2. **Manually Control the Worker**:
+   ```
+   POST https://your-app.vercel.app/socket/control
+   Body: { "action": "restart" }
+   ```
+   
+   Supported actions:
+   - `start` - Start the worker if not running
+   - `stop` - Gracefully stop the worker
+   - `restart` - Restart the worker
+
+3. **Troubleshooting Common Issues**:
+   - If the worker keeps restarting, check Vercel function logs
+   - If you get "ERR_WORKER_INIT" errors, ensure all environment variables are set
+   - If Slack messages aren't being processed, verify your Slack App Token (xapp-...)
+
+### How the Socket Mode Architecture Works
+
+1. **Initial Request**: When someone visits your app URL or a keepalive service pings it, the `socket-controller.js` serverless function runs
+2. **Worker Initialization**: The controller starts a worker thread (`socket-worker.js`) that establishes the Socket Mode WebSocket connection
+3. **Health Monitoring**: The worker sends regular heartbeats to the controller
+4. **Auto-recovery**: If the connection drops, the worker automatically reconnects
+
+This architecture lets you use Socket Mode (which normally requires a long-running process) on Vercel's serverless platform.
+
 ## Prerequisites
 - Node.js 18+ installed
 - A Slack workspace with admin access to create apps

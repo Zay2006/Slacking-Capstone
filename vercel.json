@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/socket/status",
+      "dest": "/api/socket-controller.js"
+    },
+    {
+      "src": "/socket/control",
+      "methods": ["POST"],
+      "dest": "/api/socket-controller.js"
+    },
+    {
+      "src": "/slack/events",
+      "dest": "/api/slack-events.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/slack-events.js"
+    }
+  ]
+}
