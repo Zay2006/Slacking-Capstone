@@ -21,6 +21,16 @@
       "dest": "/api/slack-events.js"
     },
     {
+      "src": "/slack/commands",
+      "methods": ["POST"],
+      "dest": "/api/slack-events.js"
+    },
+    {
+      "src": "/slack/interactive-endpoints",
+      "methods": ["POST"],
+      "dest": "/api/slack-events.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "/api/slack-events.js"
     }

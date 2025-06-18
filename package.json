@@ -4,7 +4,10 @@
     "description": "AI-Powered Slack Bot for tracking business milestones",
     "main": "app.js",
     "scripts": {
-        "start": "node app.js"
+        "start": "node app.js",
+        "build": "echo \"No build step required - ready for deployment\" && exit 0",
+        "dev": "node app.js",
+        "vercel-build": "echo \"Vercel build completed\""
     },
     "dependencies": {
         "@slack/bolt": "^4.4.0",
