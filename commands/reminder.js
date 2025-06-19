@@ -174,75 +174,45 @@ async function scheduleReminder(reminderData, client) {
 
 /**
  * Handle the /reminder slash command
- * Sets reminders with smart time recommendations and task breakdowns
- * 
- * Command formats:
- * /reminder [text] [time] - Create a new reminder
- * /reminder list - List your current reminders
- * /reminder delete [reminder_id] - Delete a specific reminder
  */
-async function handleReminderCommand({ command, respond }) {
-  try {
-    const reminderText = command.text.trim();
-    const userId = command.user_id;
-    
-    // Handle subcommands
-    if (reminderText === 'list' || reminderText === 'show' || reminderText === 'all') {
-      // In serverless environment, we can't rely on in-memory storage
-      await respond({
-        response_type: 'ephemeral',
-        text: `Sorry, listing reminders isn't available in this deployment. We're working on a database-backed version.`
-      });
-      return;
-    }
-    
-    if (reminderText.startsWith('delete') || reminderText.startsWith('remove')) {
-      await respond({
-        response_type: 'ephemeral',
-        text: `Sorry, deleting reminders isn't available in this deployment. We're working on a database-backed version.`
-      });
-      return;
-    }
-    
-    // If no recognized subcommand, create a new reminder
-    if (!reminderText) {
-      await respond({
-        response_type: 'ephemeral',
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `<@${userId}> Here's how to use the reminder command:`
-            }
-          },
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "*Create a reminder:*\n`/reminder [task] [time]`\nExample: `/reminder Submit report tomorrow at 3pm`"
-            }
-          },
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "*List your reminders:*\n`/reminder list`\n\n*Delete a reminder:*\n`/reminder delete [reminder_id]`"
-            }
-          }
-        ]
-      });
-      return;
-    }
-
-    // Show a temporary message while we process
-    const loadingMessage = await respond({
-      response_type: 'ephemeral',
-      text: `Setting up a reminder for <@${userId}>: *${reminderText}*\n\nProcessing...`
+async function handleReminderCommand({ command, client, respond }) {
+  // Command structure: /reminder [task] [time]
+  // or /reminder list
+  // or /reminder delete [id]
+  
+  const { text } = command;
+  const trimmedText = text?.trim() || '';
+  
+  // Display help for the reminder command if no text is provided
+  if (!trimmedText) {
+    await respond({
+      text: "Here's how to use the reminder command:\n" +
+            "Create a reminder:\n" +
+            "/reminder [task] [time]\n" +
+            "Example: /reminder Submit report tomorrow at 3pm\n\n" +
+            "List your reminders:\n" +
+            "/reminder list\n\n" +
+            "Delete a reminder:\n" +
+            "/reminder delete [reminder_id]",
+      response_type: 'ephemeral'
     });
+    return;
+  }
+  
+  // Check if the command is to create a new reminder
+  if (trimmedText && !trimmedText.startsWith('list') && !trimmedText.startsWith('delete')) {
+    try {
+      const userId = command.user_id;
+      const reminderText = trimmedText;
+      
+      // Show a temporary message while we process
+      const loadingMessage = await respond({
+        response_type: 'ephemeral',
+        text: `Setting up a reminder for <@${userId}>: *${reminderText}*\n\nProcessing...`
+      });
     
     // Parse the date and time from the reminder text
-    const { time, text } = await parseReminderDateTime(reminderText);
+    const { time, text: reminderContent } = await parseReminderDateTime(reminderText);
     
     // Format the time for display
     const displayTime = formatDateForDisplay(time);
@@ -252,7 +222,7 @@ async function handleReminderCommand({ command, respond }) {
         // Schedule the reminder using Slack's reminders API
         const reminder = await scheduleReminder({
           userId: userId,
-          text: text,
+          text: reminderContent,
           time: time,
           channel: command.channel_id
         }, null);
@@ -362,6 +332,7 @@ async function handleReminderCommand({ command, respond }) {
       text: `<@${command.user_id}> Sorry, I encountered an error setting your reminder. Please try again later.`
     });
   }
+  }
 }
 
 /**
@@ -371,8 +342,18 @@ async function handleReminderCommand({ command, respond }) {
  * @param {Object} client - Slack client
  * @param {Function} say - Slack say function
  */
-async function listUserReminders(userId, channelId, client, say) {
+async function listUserReminders(userId, channelId, client, respond) {
   try {
+    // Check if client is available
+    if (!client || !client.chat || !client.chat.scheduledMessages) {
+      console.error('Slack client not available for reminders');
+      await respond({
+        text: "Sorry, I can't access the Slack API in this environment.",
+        response_type: 'ephemeral'
+      });
+      return [];
+    }
+    
     // Use Slack's scheduledMessages.list API (which works with bot tokens)
     const response = await client.chat.scheduledMessages.list({
       channel: channelId // Scheduled messages are channel-specific

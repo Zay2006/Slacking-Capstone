@@ -22,9 +22,8 @@ function getPool() {
  * Handle the /audit slash command
  * Provides audit analysis for roadmap data stored in the database
  */
-async function handleAuditCommand({ command, ack, respond, say }) {
-  // Acknowledge the command request
-  await ack();
+async function handleAuditCommand({ command, ack, respond, client }) {
+  // Acknowledge the command request already happened in the caller
   
   // Show typing indicator
   await respond({
@@ -33,8 +32,28 @@ async function handleAuditCommand({ command, ack, respond, say }) {
   });
   
   try {
+    // Check for environment variables
+    if (!process.env.DATABASE_URL) {
+      console.error('DATABASE_URL environment variable is not set');
+      await respond({
+        text: ":x: Error processing the audit: Database URL not configured\nPlease ask an administrator to set up the DATABASE_URL environment variable.",
+        response_type: 'ephemeral'
+      });
+      return;
+    }
+    
     // Get database pool safely
-    const pool = getPool();
+    let pool;
+    try {
+      pool = getPool();
+    } catch (poolError) {
+      console.error('Failed to get database pool:', poolError);
+      await respond({
+        text: ":x: Error processing the audit: Database connection not available\nPlease try again later.",
+        response_type: 'ephemeral'
+      });
+      return;
+    }
     
     // Get all issues with missing data using direct PostgreSQL query
     const query = `

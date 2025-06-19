@@ -50,10 +50,8 @@ class DatabaseManager {
     this.lastPingTime = Date.now();
     this.connectionStatus = 'initializing';
     
-    // Set up a ping interval to prevent idle disconnections
-    if (this.pool) {
-      this.pingInterval = setInterval(() => this.pingDatabase(), 30000); // 30 seconds
-    }
+    // Don't use setInterval in serverless environment
+    // Instead we'll ping on-demand before queries
   }
   
   setupPool() {
@@ -96,7 +94,17 @@ class DatabaseManager {
   async query(text, params) {
     if (!this.pool) {
       console.error('Database pool not available');
-      return null;
+      throw new Error('Database connection not available');
+    }
+    
+    // Check connection before query in serverless environment
+    if (Date.now() - this.lastPingTime > 60000) { // 1 minute
+      try {
+        await this.pingDatabase();
+      } catch (pingError) {
+        console.log('Pre-query ping failed', pingError.message);
+        // Continue anyway, the actual query will error if needed
+      }
     }
     
     try {
