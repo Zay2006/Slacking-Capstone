@@ -166,6 +166,55 @@ try {
       commands: '/slack/commands',
       actions: '/slack/interactive-endpoints'
     },
+    customRoutes: [
+      {
+        path: '/health',
+        method: ['GET'],
+        handler: (req, res) => {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            environment: process.env.NODE_ENV || 'development'
+          }));
+        },
+      },
+      {
+        path: '/env-check',
+        method: ['GET'],
+        handler: (req, res) => {
+          // Only in development or with explicit flag
+          const showDetails = process.env.NODE_ENV === 'development' || req.query.showDetails === 'true';
+          
+          const envCheck = {
+            slack: {
+              botToken: Boolean(process.env.SLACK_BOT_TOKEN),
+              appToken: Boolean(process.env.SLACK_APP_TOKEN),
+              signingSecret: Boolean(process.env.SLACK_SIGNING_SECRET)
+            },
+            openai: {
+              apiKey: Boolean(process.env.OPENAI_API_KEY)
+            },
+            database: {
+              url: Boolean(process.env.DATABASE_URL),
+              poolAvailable: Boolean(global.vercelPool)
+            },
+            environment: process.env.NODE_ENV || 'not set'
+          };
+
+          // Add extra diagnostic information safely
+          if (showDetails) {
+            envCheck.diagnostics = {
+              aiServiceStatus: global.aiServiceStatus,
+              databasePoolStatus: global.vercelPool ? 'initialized' : 'not initialized'
+            };
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(envCheck, null, 2));
+        }
+      }
+    ],
     // Add custom error handler for better diagnostics
     customErrorHandler: (error) => {
       console.error('Express receiver error:', error);
