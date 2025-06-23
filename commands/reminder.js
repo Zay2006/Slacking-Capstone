@@ -44,7 +44,7 @@ async function parseReminderDateTime(reminderText) {
       `2. Use 24-hour format for time (e.g., 13:00 not 1:00 PM).\n` +
       `3. Current date and time is: ${currentDate} ${currentHour}:${currentMinute.toString().padStart(2, '0')}.\n` +
       `4. If no specific time is mentioned, default to 9:00 AM.\n` +
-      `5. If the time specified for TODAY has already passed, assume the user means TOMORROW at that time.\n` +
+      `5. For times specified for TODAY: If the time is still upcoming today (even by a few minutes), keep it for today. Only move to tomorrow if the time is significantly past (more than 1 hour ago).\n` +
       `6. If "next Monday" is mentioned and today is Monday, assume the user means NEXT week's Monday.\n` +
       
       `IMPORTANT: Return ONLY the JSON object without any other text.`, 
@@ -60,8 +60,13 @@ async function parseReminderDateTime(reminderText) {
         // Additional safeguard: If time is in the past, adjust to tomorrow
         if (parsed.time) {
           const reminderDate = new Date(parsed.time);
-          if (reminderDate < now) {
-            // Time is in the past, move to tomorrow
+          const now = new Date();
+          
+          // Only adjust if the time is more than 1 hour in the past
+          // This prevents same-day reminders from being moved to tomorrow
+          const timeDiff = reminderDate.getTime() - now.getTime();
+          if (timeDiff < -3600000) { // More than 1 hour in the past
+            // Time is significantly in the past, move to tomorrow
             reminderDate.setDate(reminderDate.getDate() + 1);
             parsed.time = reminderDate.toISOString().split('.')[0].replace('T', ' ');
             console.log(`Adjusted past time to tomorrow: ${parsed.time}`);
@@ -367,7 +372,10 @@ async function listUserReminders(userId, channelId, client, respond) {
     );
     
     if (!reminders || reminders.length === 0) {
-      await say(`<@${userId}> You don't have any active reminders.`);
+      await respond({
+        text: `<@${userId}> You don't have any active reminders.`,
+        response_type: 'ephemeral'
+      });
       return;
     }
     
@@ -425,13 +433,17 @@ async function listUserReminders(userId, channelId, client, respond) {
       reminderBlocks.pop();
     }
     
-    await say({
+    await respond({
       text: `${userId} Here are your current reminders.`,
-      blocks: reminderBlocks
+      blocks: reminderBlocks,
+      response_type: 'ephemeral'
     });
   } catch (error) {
     console.error('Error listing reminders:', error);
-    await say(`<@${userId}> Sorry, I encountered an error retrieving your reminders: ${error.message}`);
+    await respond({
+      text: `<@${userId}> Sorry, I encountered an error retrieving your reminders: ${error.message}`,
+      response_type: 'ephemeral'
+    });
   }
 }
 
@@ -465,12 +477,34 @@ async function deleteReminder(scheduledMessageId, userId, channelId, client, say
 
 /**
  * Handle delete reminder button action
- * @param {Object} body - Button click payload
+ * @param {Object} payload - Button click payload
  * @param {Object} client - Slack client
+ * @param {Function} ack - Acknowledge function
+ * @param {Function} respond - Respond function
+ * @param {Object} body - Body of the request
  */
-async function handleDeleteReminderAction({ body, client }) {
-  // Extract values from the action
-  let scheduledMessageId, userId, channel;
+async function handleDeleteReminderAction({ payload, client, ack, respond, body }) {
+  await ack();
+  
+  console.log('Delete reminder action payload:', JSON.stringify(payload, null, 2));
+  console.log('Delete reminder action body:', JSON.stringify(body, null, 2));
+  
+  // Get values from the action handler parameters
+  const scheduledMessageId = payload?.value;
+  const userId = body?.user?.id;
+  const channel = body?.channel?.id;
+  
+  console.log('Extracted values:', { scheduledMessageId, userId, channel });
+  
+  // Validate required fields
+  if (!scheduledMessageId || !userId || !channel) {
+    console.error('Missing required fields in delete reminder payload:', { scheduledMessageId, userId, channel });
+    await respond({
+      response_type: 'ephemeral',
+      text: 'Sorry, I couldn\'t delete the reminder due to missing information.'
+    });
+    return;
+  }
   
   try {
     // Handle different payload structures

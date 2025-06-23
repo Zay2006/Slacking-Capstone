@@ -107,6 +107,7 @@ async function handleConvoCommand({ command, respond, client }) {
     // Post the summary to the channel
     await respond({
       response_type: 'in_channel',
+      text: "Conversation Summary",
       blocks: [
         {
           type: "header",

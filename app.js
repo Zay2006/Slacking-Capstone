@@ -13,7 +13,13 @@ const { createClient } = require('@supabase/supabase-js');
 
 // Import command handlers and AI utilities
 const handlers = require('./commands');
-const { initAI } = require('./utils/ai');
+const { initAI, getAIResponse, cleanupMarkdown } = require('./utils/ai');
+
+// Custom function to remove only bold markdown (**) while keeping emojis
+function removeBoldMarkdown(text) {
+  // Remove bold markdown (**text**)
+  return text.replace(/\*\*(.*?)\*\*/g, '$1');
+}
 
 // Define OPENAI_API_KEY variable
 let OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -138,35 +144,39 @@ pool.query('SELECT NOW()', (err, res) => {
   }
 });
 
-// Utility function to generate AI responses
-async function generateAIResponse(prompt) {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 500
-    });
-    
-    return completion.choices[0].message.content;
-  } catch (error) {
-    console.error("Error generating AI response:", error);
-    return "I'm having trouble connecting to my AI services right now. Please try again later.";
-  }
-}
-
 // Handle direct messages to the bot
 app.message(async ({ message, client, say }) => {
-  // Skip messages from the bot itself
-  if (message.subtype === 'bot_message') return;
+  // Skip messages from the bot itself and message change events
+  if (message.subtype === 'bot_message' || message.subtype === 'message_changed') return;
   
-  // Safely check if the bot is mentioned and message has text
-  const isBotMentioned = message.text && message.text.includes(`<@${app.botId}>`);
+  // Skip if the message has a bot_id (it's from a bot)
+  if (message.bot_id) return;
+  
+  // Check if this is a direct message or if the bot is mentioned
   const isDirectMessage = message.channel_type === 'im';
+  const isBotMentioned = message.text && /<@U[A-Z0-9]+>/.test(message.text); // Match any user mention pattern
   
+  // Only respond in direct messages or when mentioned
   if (isDirectMessage || isBotMentioned) {
     try {
       // Process the user's message - ensuring message.text exists before operating on it
       const userMessage = message.text ? message.text.replace(/<@[A-Z0-9]+>/g, '').trim().toLowerCase() : '';
+      
+      // Handle questions about the bot's objective/purpose
+      if (/what.*objective|what.*purpose|what.*do.*you.*do|what.*are.*you.*for|what.*your.*job/.test(userMessage)) {
+        await client.chat.postMessage({
+          channel: message.channel,
+          text: `Hey <@${message.user}>! I'm Milestone Madness, your AI project management assistant! 🚀\n\n` +
+                `My main objectives are:\n` +
+                `• 📅 Smart Reminders - Set and manage task reminders with natural language\n` +
+                `• 📊 Data Audits - Analyze project data completeness and provide insights\n` +
+                `• 📝 Task Summaries - Generate AI-powered summaries of your current tasks\n` +
+                `• 💬 Conversation Analysis - Summarize channel discussions and key decisions\n` +
+                `• 🎯 Project Drafts - Help create project plans and documentation\n\n` +
+                `Try commands like /reminder, /task, /audit, or just chat with me directly!`
+        });
+        return;
+      }
       
       // Handle snarky responses for "what can't you do" questions
       if (/what.*can't.*do|what.*cant.*do|what.*not.*able.*do|what.*limitations|is.*anything.*can't.*do/.test(userMessage)) {
@@ -202,7 +212,10 @@ app.message(async ({ message, client, say }) => {
       });
       
       // Generate response using OpenAI
-      const response = await generateAIResponse(userMessage);
+      const response = await getAIResponse(userMessage);
+      
+      // Remove only bold markdown (**) while keeping emojis and other formatting
+      const cleanResponse = removeBoldMarkdown(response);
       
       // For chat messages, a slight delay helps ensure proper message ordering
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -211,14 +224,21 @@ app.message(async ({ message, client, say }) => {
       // Using client.chat.postMessage without thread_ts ensures visibility to all
       await client.chat.postMessage({
         channel: message.channel,
-        text: response
+        text: cleanResponse
       });
     } catch (error) {
       console.error("Error handling message:", error);
-      await client.chat.postMessage({
-        channel: message.channel,
-        text: "Sorry, I encountered an error processing your request."
-      });
+      console.error("Message object:", JSON.stringify(message, null, 2));
+      console.error("Error details:", error.data || error.message);
+      
+      try {
+        await client.chat.postMessage({
+          channel: message.channel,
+          text: "Sorry, I encountered an error processing your request."
+        });
+      } catch (postError) {
+        console.error("Failed to send error message:", postError);
+      }
     }
   }
 });
@@ -249,7 +269,7 @@ app.command('/draft', async ({ command, ack, respond }) => {
     
     // Generate draft
     const prompt = `Create a project draft for "${command.text}"`;
-    const response = await generateAIResponse(prompt);
+    const response = await getAIResponse(prompt);
     
     // Send the response
     await respond({
@@ -309,12 +329,13 @@ app.action('help_button', async ({ ack, body, client }) => {
   // Show a more detailed help message that's visible to everyone
   await client.chat.postMessage({
     channel: body.channel.id,
+    text: "Milestone Madness Help - Complete guide to using the bot",
     blocks: [
       {
         "type": "header",
         "text": {
           "type": "plain_text",
-          "text": "🛟 Milestone Madness Help",
+          "text": " Milestone Madness Help",
           "emoji": true
         }
       },
@@ -330,11 +351,11 @@ app.action('help_button', async ({ ack, body, client }) => {
         "fields": [
           {
             "type": "mrkdwn",
-            "text": "*🔍 Project Audit*\n`/audit [project-id]`\nProvides detailed analysis of project data with insights on progress, risks, and timelines."
+            "text": "* Project Audit*\n`/audit [project-id]`\nProvides detailed analysis of project data with insights on progress, risks, and timelines."
           },
           {
             "type": "mrkdwn",
-            "text": "*📝 Content Creation*\n`/draft [request]`\nGenerates professional drafts for project docs, announcements, or reports."
+            "text": "* Content Creation*\n`/draft [request]`\nGenerates professional drafts for project docs, announcements, or reports."
           }
         ]
       },
@@ -343,11 +364,11 @@ app.action('help_button', async ({ ack, body, client }) => {
         "fields": [
           {
             "type": "mrkdwn",
-            "text": "*⏰ Smart Reminders*\n`/reminder [task] [date]`\nSets intelligent reminders with task breakdowns and timing suggestions."
+            "text": "* Smart Reminders*\n`/reminder [task] [date]`\nSets intelligent reminders with task breakdowns and timing suggestions."
           },
           {
             "type": "mrkdwn",
-            "text": "*💬 Direct Chat*\n`@Milestone Madness [question]`\nAsk me anything about your projects, roadmaps, or for recommendations."
+            "text": "* Direct Chat*\n`@Milestone Madness [question]`\nAsk me anything about your projects, roadmaps, or for recommendations."
           }
         ]
       },
@@ -356,7 +377,7 @@ app.action('help_button', async ({ ack, body, client }) => {
         "elements": [
           {
             "type": "mrkdwn",
-            "text": "💡 *Pro tip:* Try asking me 'What can't you do?' for a fun response!"
+            "text": " *Pro tip:* Try asking me 'What can't you do?' for a fun response!"
           }
         ]
       }
@@ -376,10 +397,10 @@ app.command('/reminder', async ({ command, ack, say, client }) => {
 });
 
 // Handle the delete_reminder button click action
-app.action('delete_reminder', async ({ ack, payload, respond, client }) => {
+app.action('delete_reminder', async ({ ack, payload, respond, client, body }) => {
   try {
     // Use our action handler from the commands module
-    await handlers.handleDeleteReminderAction({ ack, payload, respond, client });
+    await handlers.handleDeleteReminderAction({ ack, payload, respond, client, body });
   } catch (error) {
     console.error("Error handling delete_reminder action:", error);
     await respond({
@@ -422,7 +443,7 @@ app.command('/describe', async ({ ack, respond }) => {
           type: "header",
           text: {
             type: "plain_text",
-            text: "✨ Milestone Madness Bot",
+            text: "Milestone Madness Bot",
             emoji: true
           }
         },
@@ -447,21 +468,21 @@ app.command('/describe', async ({ ack, respond }) => {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*📋 Project Management*\n`/audit [project]`\nVerify project data accuracy and identify potential issues.\n\n`/draft [topic]`\nGenerate draft project plans with milestones and timelines."
+            text: "* Project Management*\n`/audit [project]`\nVerify project data accuracy and identify potential issues.\n\n`/draft [topic]`\nGenerate draft project plans with milestones and timelines."
           }
         },
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*⏰ Time Management*\n`/reminder [task] [time]`\nSet smart reminders with AI-powered time suggestions.\n\n`/task`\nGet a summary of your daily tasks based on your active reminders."
+            text: "* Time Management*\n`/reminder [task] [time]`\nSet smart reminders with AI-powered time suggestions.\n\n`/task`\nGet a summary of your daily tasks based on your active reminders."
           }
         },
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*💬 Communication*\n`/convo [optional: number of messages]`\nSummarize recent conversations in the current channel.\n\n`/describe`\nLearn more about the bot's capabilities and commands."
+            text: "* Communication*\n`/convo [optional: number of messages]`\nSummarize recent conversations in the current channel.\n\n`/describe`\nLearn more about the bot's capabilities and commands."
           }
         },
         {
@@ -556,11 +577,11 @@ function setupSocketModeReconnection(app) {
     // Test database connection
     console.log("Testing database connection...");
     const connection = await testConnection();
-    console.log("✅ Database connection successful!", new Date().toISOString());
+    console.log("Database connection successful!", new Date().toISOString());
     
     // Start the app server
     await app.start(port);
-    console.log(`✅ Milestone Madness is running on port ${port}!`);
+    console.log(`Milestone Madness is running on port ${port}!`);
     
     // Setup socket mode reconnection after app starts
     setupSocketModeReconnection(app);

@@ -1,10 +1,10 @@
 // task.js - Handler for /task slash command
 const { getAIResponse } = require('../utils/ai');
+const { getConnection } = require('../utils/database');
 
 /**
  * Summarize user's tasks from reminders
- * @param {Object} params - Command parameters
- * @returns {Promise<void>}
+ * @param {Object} params - Parameters from Slack
  */
 async function handleTaskCommand({ command, respond, client }) {
   try {
@@ -16,41 +16,30 @@ async function handleTaskCommand({ command, respond, client }) {
       text: `Gathering task summary for <@${userId}>...`
     });
     
-    // Check if client is available
-    if (!client || !client.reminders || !client.reminders.list) {
-      await respond({
-        response_type: 'ephemeral',
-        text: `Sorry, I can't access the Slack Reminders API in this environment.`
-      });
-      return;
-    }
-    
-    // Get user's reminders through the Slack API
-    let reminders = [];
+    // Get user's reminders from our database
+    let activeReminders = [];
     try {
-      const reminderResponse = await client.reminders.list({
-        user: userId
-      });
+      const db = await getConnection();
+      const result = await db.query(`
+        SELECT task_name, reminder_time, completed 
+        FROM reminders 
+        WHERE user_id = $1 AND completed = false 
+        ORDER BY reminder_time ASC
+      `, [userId]);
       
-      reminders = reminderResponse.reminders || [];
-    } catch (slackError) {
-      console.error('Error fetching reminders:', slackError);
-      await respond({
-        response_type: 'ephemeral',
-        text: `I couldn't retrieve your reminders: ${slackError.message}`
-      });
-      return;
+      activeReminders = result.rows || [];
+    } catch (dbError) {
+      console.log('Database connection error:', dbError);
+      // Fall back to empty array if database isn't available
     }
-    
-    const activeReminders = reminders.filter(r => !r.complete);
-    
-    // Format reminders for the AI
-    let reminderText = "";
+
+    // Format reminders for display
+    let reminderText;
     if (activeReminders.length > 0) {
       reminderText = "Your current reminders:\n";
       activeReminders.forEach((reminder, index) => {
-        const reminderTime = new Date(reminder.time * 1000);
-        reminderText += `${index + 1}. ${reminder.text} (${reminderTime.toLocaleString()})\n`;
+        const reminderTime = new Date(reminder.reminder_time);
+        reminderText += `${index + 1}. ${reminder.task_name} (${reminderTime.toLocaleString()})\n`;
       });
     } else {
       reminderText = "You currently have no active reminders.";
