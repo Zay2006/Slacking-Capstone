@@ -7,9 +7,10 @@
 
 ## Project Overview
 
-**Industry**: Technology/Project Management
-**Developer**: Zay2006
-**Completion Date**: 06/27/2025
+**Industry**: Technology/Project Management  
+**Developer**: Isaiah Wright (Zay2006)  
+**Client**: Alina Ispas, Senior Director at Boomi  
+**Completion Date**: June 2025  
 **GitHub Repository**: [Zay2006/Slacking-Capstone](https://github.com/Zay2006/Slacking-Capstone)
 
 ![Milestone Madness Bot](https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=2070&auto=format&fit=crop&ixlib=rb-1.2.1&auto=format&fit=crop&w=800&h=400)
@@ -74,6 +75,32 @@ Milestone Madness is an intelligent Slack bot that seamlessly integrates AI-powe
    - Visual command interface with Slack Block Kit
    - Comprehensive help system with examples
    - Error handling with user-friendly messages
+
+### Recent Improvements & Bug Fixes
+
+**Enhanced Message Handling (December 2024)**
+- Fixed bot response filtering to prevent infinite loops and API errors
+- Improved mention detection to work with any user ID pattern
+- Added proper handling for direct messages vs. channel mentions
+- Removed dependency on undefined bot ID variables
+
+**AI Integration Refinements**
+- Migrated from PlayLab API to OpenAI API for better reliability
+- Implemented custom markdown cleanup to remove bold formatting while preserving emojis
+- Added intelligent objective responses for user onboarding
+- Enhanced error handling with fallback responses
+
+**Database & API Reliability**
+- Fixed Supabase client initialization issues in task commands
+- Added proper PostgreSQL connection handling with environment variables
+- Resolved "missing required field: user" errors in Slack API calls
+- Improved reminder date logic to prevent same-day reminders from moving to tomorrow
+
+**User Experience Enhancements**
+- Added missing `text` fields to all Slack API calls for accessibility
+- Improved delete reminder functionality with better payload parsing
+- Enhanced error logging and debugging for troubleshooting
+- Made all responses visible in channels for team-wide benefit
 
 ### Value Proposition
 
@@ -462,7 +489,7 @@ While Vercel is a serverless platform and Socket Mode requires a persistent WebS
 
    ```bash
    # Install dependencies
-   npm install axios
+   npm install
    
    # Run the keepalive script
    node scripts/keepalive.js
@@ -831,4 +858,6 @@ npm start
 
 ---
 
-*Milestone Madness: Making project management less mad and more milestone-focused!*
+**🎯 Milestone Madness: Making project management less mad and more milestone-focused!**
+
+*Built with ❤️ by Isaiah Wright for the LaunchCode Capstone Program*
